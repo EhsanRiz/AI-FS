@@ -1,0 +1,8 @@
+# Keep non-web files off the edge — the PWA only needs HTML/JS/CSS/images/manifest/sw.
+.agents/
+.claude/
+.mcp.json
+skills-lock.json
+supabase/
+wrangler.toml
+README.md

@@ -1,0 +1,10 @@
+# AI-FS — FS Field Monitoring PWA. Cloudflare Workers Static Assets, no worker code.
+# Connect this repo in the Cloudflare dashboard (Workers & Pages -> import repo);
+# every push to main auto-deploys. Custom domain: fs.4dcs.co.za (zone is on Cloudflare).
+name = "ai-fs"
+compatibility_date = "2026-07-01"
+account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
+
+[assets]
+directory = "./"
+not_found_handling = "single-page-application"
