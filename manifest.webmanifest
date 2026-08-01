@@ -1,0 +1,15 @@
+{
+  "name": "FS Field Monitoring — 4D Climate Solutions",
+  "short_name": "FS Monitor",
+  "description": "Field Supervisor soil data collection & monitoring for the AI-Powered Extension for Agricultural Resilience project (Lesotho).",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f9f8f5",
+  "theme_color": "#006838",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
