@@ -45,9 +45,9 @@ as a PWA from the browser menu on phones.
 | Screen | Who | What |
 |---|---|---|
 | Sites | all | Validation-site targets + progress, all 18 sub-areas, start a visit |
-| Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register new farmer (works offline), jump to a visit |
+| Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register new farmer or edit farmer details (both work offline), jump to a visit |
 | Map | all | Leaflet map, district colours, validation sites ringed gold |
-| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (distance vs known coords) → AI advisory administered? → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → up to 2 photos → notes |
+| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → AI advisory administered Yes/No (**required**) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
 | Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
 

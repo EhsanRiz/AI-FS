@@ -1,12 +1,12 @@
 /* FS Field Monitoring — service worker.
    App-shell cache-first so the app opens with no signal in the field.
    Bump VERSION whenever app.js / styles.css / index.html change. */
-var VERSION = 'fsm-v3';
+var VERSION = 'fsm-v4';
 var PRECACHE = [
   './',
   './index.html',
-  './styles.css?v=2',
-  './app.js?v=3',
+  './styles.css?v=3',
+  './app.js?v=4',
   './data/sites.js?v=1',
   './assets/logo-4dcs.png?v=1',
   './manifest.webmanifest',

@@ -790,3 +790,13 @@ end $$;
 -- To rebuild a fresh project: run this file, then re-apply migration
 -- fs_farmers_ai_and_issues from the Supabase dashboard history (or ask Claude
 -- to re-emit it), then re-seed farmers from the workbook.
+
+-- =============================================================================
+-- v5 (2026-08): farmer editing + mandatory visit fields.
+-- Applied as migration fs_farmer_edit_and_mandatory_visit_fields.
+--   * fs_register_farmer is now an upsert: an existing id updates name/village/
+--     gender/age/phone (site_id and source/registered_by never change; station
+--     lock applies to both the payload site and the farmer's existing site).
+--   * fs_submit_visit rejects submissions missing GPS coordinates, an explicit
+--     ai_administered answer (true/false), or at least one photo.
+-- =============================================================================
