@@ -366,8 +366,9 @@ function render() {
 }
 
 function headerHTML() {
+  var staff = S.me && S.me.role !== 'supervisor';
   return '<header class="app-header">' +
-    '<button class="burger" id="btnBurger" aria-label="Menu"><span></span><span></span><span></span></button>' +
+    (staff ? '<button class="burger" id="btnBurger" aria-label="Menu"><span></span><span></span><span></span></button>' : '') +
     '<div><div class="title">FS Field Monitoring</div>' +
     '<div class="sub">' + esc(S.me ? S.me.name : '') +
     (S.me && S.me.role === 'manager' ? ' · Manager' : (S.me && S.me.role === 'viewer' ? ' · Viewer' : '')) + '</div></div>' +
@@ -403,16 +404,21 @@ function navLinksHTML(route) {
   }).join('');
 }
 function navHTML(route) {
-  return '<nav class="bottom-nav">' + navLinksHTML(route) + '</nav>' +
-    '<div class="drawer-overlay" id="drawerOverlay"></div>' +
-    '<aside class="drawer" id="drawer">' +
-    '<img src="assets/logo-4dcs.png?v=1" alt="4D Climate Solutions" style="width:170px;margin:4px 0 14px">' +
-    '<nav class="drawer-nav">' + navLinksHTML(route) + '</nav>' +
-    '<div class="drawer-foot">' +
-    '<a class="btn btn-outline btn-block btn-sm" href="testing.html" target="_blank" style="margin-bottom:8px">Testing guide</a>' +
-    '<button class="btn btn-secondary btn-block btn-sm" id="drawerSync">Sync now</button>' +
-    '<button class="btn btn-outline btn-block btn-sm mt8" id="drawerLogout">Sign out</button>' +
-    copyrightHTML() + '</div></aside>';
+  var staff = S.me && S.me.role !== 'supervisor';
+  // FS: one-tap bottom tabs (no burger). Staff: burger drawer on mobile, no
+  // bottom tabs; both become the left sidebar on >=900px screens.
+  var html = '<nav class="bottom-nav' + (staff ? ' staff-nav' : '') + '">' + navLinksHTML(route) + '</nav>';
+  if (staff) {
+    html += '<div class="drawer-overlay" id="drawerOverlay"></div>' +
+      '<aside class="drawer" id="drawer">' +
+      '<img src="assets/logo-4dcs.png?v=1" alt="4D Climate Solutions" style="width:170px;margin:4px 0 14px">' +
+      '<nav class="drawer-nav">' + navLinksHTML(route) + '</nav>' +
+      '<div class="drawer-foot">' +
+      '<a class="btn btn-outline btn-block btn-sm" href="testing.html" target="_blank" style="margin-bottom:8px">Testing guide</a>' +
+      '<button class="btn btn-outline btn-block btn-sm" id="drawerLogout">Sign out</button>' +
+      copyrightHTML() + '</div></aside>';
+  }
+  return html;
 }
 function bindDrawer() {
   var burger = $('#btnBurger'), drawer = $('#drawer'), ov = $('#drawerOverlay');
@@ -421,7 +427,6 @@ function bindDrawer() {
   burger.onclick = function () { drawer.classList.toggle('open'); ov.classList.toggle('open'); };
   ov.onclick = close;
   drawer.onclick = function (e) { if (e.target.closest('a')) close(); };
-  $('#drawerSync').onclick = function () { close(); syncAll(true); };
   $('#drawerLogout').onclick = function () { close(); confirmLogout(); };
 }
 function renderNavBadge() {
@@ -589,6 +594,32 @@ function statModal(key) {
   } else if (key === 'samples') {
     showModal('Topsoil samples', '<p class="muted small">Visits where a 0–20 cm topsoil sample was collected for laboratory pairing (matched to sensor readings via the sample ID).</p>' +
       '<p>Total collected: <b>' + (t.samples || 0) + '</b></p>');
+  } else if (key === 'fs_unstarted' || key === 'fs_inactive') {
+    var team = ((S._act || {}).team || []).filter(function (m) { return m.role === 'supervisor' && m.active !== false; });
+    var pick = (prog.supervisors || []).filter(function (sp) {
+      if (sp.role !== 'supervisor' || sp.active === false) return false;
+      return key === 'fs_unstarted' ? !sp.last_synced_at
+                                    : (sp.last_synced_at && daysSince(sp.last_synced_at) >= 7);
+    });
+    showModal(key === 'fs_unstarted' ? 'Not started yet' : 'Inactive 7+ days',
+      '<p class="muted small">' + (key === 'fs_unstarted'
+        ? 'Field Supervisors with no synced visits so far.'
+        : 'No synced visits in the last 7 days.') + '</p>' +
+      miniTable(pick.map(function (sp) {
+        var tm = team.find(function (m) { return m.id === sp.id; }) || {};
+        return [esc2(sp.name) + (tm.station ? ' <span class="muted small">· ' + esc2(tm.station) + '</span>' : ''),
+                sp.last_synced_at ? daysSince(sp.last_synced_at) + 'd ago' : '—'];
+      })));
+  } else if (key === 'flags') {
+    var fl = ((S._act || {}).visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); }).slice(0, 10);
+    showModal('Data-quality flags', fl.length ? fl.map(function (v) {
+      var why = [];
+      if (v.gps_lat == null) why.push('no GPS');
+      else if (v.gps_flag) why.push(fmtDist(v.distance_from_site_m) + ' from site');
+      if (Number(v.out_of_range)) why.push(v.out_of_range + ' reading(s) out of range');
+      return '<div class="queue-item"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
+        '<div class="small" style="color:var(--warn)">' + esc2(why.join(' · ')) + '</div></div>';
+    }).join('') : '<p class="muted small">No flagged visits.</p>');
   } else if (key === 'farmers_listed') {
     showModal('Farmers by site', miniTable(sites2.map(function (x) {
       return [esc2(x.sub_area), x.farmers_total || 0]; })));
@@ -698,7 +729,8 @@ function viewSmartHome() {
     '<a class="btn btn-secondary btn-sm" style="flex:1" href="#/map">Map</a>' +
     '</div>';
 
-  html += copyrightHTML();
+  html += '<p class="small" style="text-align:center;margin-top:14px"><a href="testing.html" style="color:var(--forest-dark)">Testing guide</a></p>' +
+    copyrightHTML();
   return html;
 }
 function bindSmartHome() {
@@ -1494,25 +1526,30 @@ function renderDash(prog, act) {
   var t = prog.totals, g = prog.targets;
   var html = '';
 
-  // intelligence strip: who/what needs attention
+  // intelligence strip: at most 4 aggregated, tappable items — never a wall of rows
+  var fsAll = (prog.supervisors || []).filter(function (sp) { return sp.role === 'supervisor' && sp.active !== false; });
+  var unstarted = fsAll.filter(function (sp) { return !sp.last_synced_at; });
+  var inactive = fsAll.filter(function (sp) { return sp.last_synced_at && daysSince(sp.last_synced_at) >= 7; });
+  var flaggedList = (act.visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); });
+  var issueList = (act.visits || []).filter(function (v) { return v.issue; });
   var attention = [];
-  (prog.supervisors || []).forEach(function (sp) {
-    if (sp.role !== 'supervisor' || sp.active === false) return;
-    var d = daysSince(sp.last_synced_at);
-    if (sp.last_synced_at == null) attention.push(['warn', esc(sp.name) + ' has not synced any visits yet']);
-    else if (d >= 7) attention.push(['warn', esc(sp.name) + ' inactive for ' + d + ' days']);
-  });
-  var flagged = (act.visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); }).length;
-  if (flagged) attention.push(['info', flagged + ' recent visit(s) with data-quality flags (GPS or out-of-range)']);
-  var openIssues = (act.visits || []).filter(function (v) { return v.issue; }).slice(0, 3);
-  openIssues.forEach(function (v) {
-    attention.push(['info', 'Issue at ' + esc(v.site) + ' (' + esc(v.supervisor) + '): ' + esc(v.issue)]);
-  });
-  if (attention.length) {
-    html += '<div class="card"><h2>Needs attention</h2>' + attention.slice(0, 6).map(function (a) {
-      return '<div class="nudge ' + a[0] + '" style="margin-bottom:6px">' + a[1] + '</div>';
-    }).join('') + '</div>';
-  }
+  if (unstarted.length) attention.push(['warn',
+    unstarted.length + ' of ' + fsAll.length + ' Field Supervisors have not synced a visit yet', 'fs_unstarted']);
+  if (inactive.length) attention.push(['warn',
+    inactive.length + ' Field Supervisor' + (inactive.length === 1 ? '' : 's') + ' inactive for 7+ days', 'fs_inactive']);
+  if (flaggedList.length) attention.push(['info',
+    flaggedList.length + ' recent visit' + (flaggedList.length === 1 ? '' : 's') + ' with data-quality flags', 'flags']);
+  if (issueList.length) attention.push(['info',
+    issueList.length + ' issue' + (issueList.length === 1 ? '' : 's') + ' reported — latest: ' +
+    esc(String(issueList[0].issue).slice(0, 50)), 'issues']);
+  html += '<div class="card"><h2>Needs attention</h2>' +
+    (attention.length
+      ? attention.map(function (a) {
+          return '<button class="nudge ' + a[0] + '" style="width:100%;margin-bottom:6px" data-modal="' + a[2] + '">' +
+            a[1] + ' <span style="margin-left:auto">›</span></button>';
+        }).join('')
+      : '<div class="nudge ok">All good — nothing needs attention right now</div>') +
+    '</div>';
 
   html += '<div class="stat-grid">' +
     stat(t.visits, 'Total visits', 'visits_total') +
@@ -1654,11 +1691,18 @@ loadQueue().catch(function () {}).then(function () {
   if (!location.hash) location.hash = S.token ? '#/home' : '#/login';
   render();
   if (S.token) {
-    // refresh cached data, but only re-render passive views — never the visit
-    // form, or a late response would wipe readings being typed
+    // refresh cached data, then re-render only the content view — a full
+    // render would wipe in-progress typing and reset the open drawer
     refreshBoot().then(function () {
       var r = (location.hash || '#/home').replace(/^#/, '');
-      if (r === '/home' || r === '' || r === '/map') render();
+      var v = $('#view');
+      if (!v) return;
+      if ((r === '/home' || r === '') && S.me && S.me.role === 'supervisor') {
+        v.innerHTML = viewSmartHome(); bindSmartHome();
+      } else if (r === '/map') {
+        v.innerHTML = viewMap(); bindMap();
+      }
+      renderNavBadge();
     });
     syncAll();
   }
