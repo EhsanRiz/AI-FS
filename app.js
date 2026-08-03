@@ -1149,7 +1149,8 @@ function bindVisit() {
     form.farm_id = null;
     rerenderVisit();
   });
-  $all('.farm-chip').forEach(function (b) {
+  // only real farm chips — the AI Yes/No buttons share the class for styling
+  $all('.farm-chip[data-farm]').forEach(function (b) {
     b.addEventListener('click', function () {
       captureFormText();
       form.farm_id = Number(this.dataset.farm);
