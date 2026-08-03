@@ -833,3 +833,9 @@ end $$;
 -- can record visits'). fs_register_farmer stays open to supervisors (their
 -- station) and managers (data corrections); viewers remain fully read-only.
 -- =============================================================================
+
+-- =============================================================================
+-- v10 (2026-08): fs_visit_detail(p_token, p_visit_id) — full single-visit
+-- drill-down (visit + names, readings, photos). Staff see any visit;
+-- supervisors their own station's. Applied as migration fs_visit_detail.
+-- =============================================================================

@@ -77,23 +77,161 @@ function farmersOf(siteId) {
   return farmers().filter(function (f) { return f.site_id === Number(siteId); })
     .sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
-function showModal(title, html) {
+var _mstack = [];
+var _mtitle = '';
+function renderModalFrame(title, html) {
   var root = $('#modalRoot');
   if (!root) { root = document.createElement('div'); root.id = 'modalRoot'; document.body.appendChild(root); }
   root.innerHTML = '<div class="modal-overlay open" id="modalOverlay"></div>' +
     '<div class="modal open" role="dialog" aria-modal="true">' +
+    (_mstack.length ? '<button class="modal-x modal-back" id="modalBack" aria-label="Back">‹</button>' : '') +
     '<button class="modal-x" id="modalX" aria-label="Close">×</button>' +
-    '<h2 style="font-size:17px;color:var(--forest-dark);margin-bottom:10px;padding-right:36px">' + esc(title) + '</h2>' +
+    '<h2 style="font-size:17px;color:var(--forest-dark);margin-bottom:10px;padding:0 36px 0 ' + (_mstack.length ? '40px' : '0') + '">' + esc(title) + '</h2>' +
     '<div id="modalBody">' + html + '</div></div>';
   $('#modalX').onclick = closeModal;
   $('#modalOverlay').onclick = closeModal;
+  var back = $('#modalBack');
+  if (back) back.onclick = modalBack;
+  // drill-down inside any modal: rows can point at a visit or a site's visits
+  root.onclick = function (e) {
+    if (e.target.id === 'modalX' || e.target.id === 'modalBack' || e.target.id === 'modalOverlay') return;
+    var vEl = e.target.closest && e.target.closest('[data-visit]');
+    if (vEl) { visitDetailModal(vEl.getAttribute('data-visit')); return; }
+    var sEl = e.target.closest && e.target.closest('[data-sitevisits]');
+    if (sEl) siteVisitsModal(sEl.getAttribute('data-sitevisits'));
+  };
   document.addEventListener('keydown', modalEsc);
+}
+function showModal(title, html) {
+  var root = $('#modalRoot');
+  if (root && root.querySelector('.modal')) {
+    _mstack.push({ t: _mtitle, h: ($('#modalBody') || {}).innerHTML || '' });
+  }
+  _mtitle = title;
+  renderModalFrame(title, html);
+}
+function modalBack() {
+  var prev = _mstack.pop();
+  if (!prev) { closeModal(); return; }
+  _mtitle = prev.t;
+  renderModalFrame(prev.t, prev.h);
 }
 function modalEsc(e) { if (e.key === 'Escape') closeModal(); }
 function closeModal() {
+  _mstack = [];
+  _mtitle = '';
   var root = $('#modalRoot');
-  if (root) root.innerHTML = '';
+  if (root) { root.innerHTML = ''; root.onclick = null; }
   document.removeEventListener('keydown', modalEsc);
+}
+
+/* ---------------- visit drill-down (works on local + synced records) ------ */
+function visitDetailRows(v) {
+  var gps = v.gps_lat == null ? '<span class="flag">not captured</span>'
+    : Number(v.gps_lat).toFixed(5) + ', ' + Number(v.gps_lon).toFixed(5) +
+      (v.gps_accuracy_m ? ' (±' + Math.round(v.gps_accuracy_m) + 'm)' : '') +
+      (v.distance_from_site_m != null
+        ? (Number(v.distance_from_site_m) > 500
+            ? ' · <span class="flag">' + fmtDist(v.distance_from_site_m) + ' from site ⚠</span>'
+            : ' · <b style="color:var(--ok)">' + fmtDist(v.distance_from_site_m) + ' from site</b>')
+        : '');
+  var rows = [
+    ['When', fmtWhen(v.submitted_at || v.synced_at || v.updated_at)],
+    ['Supervisor', v.supervisor ? esc(v.supervisor) : null],
+    ['Site', esc(v.site || '') + (v.farm ? ' · ' + esc(v.farm) : '')],
+    ['Farmer', v.farmer ? esc(v.farmer) : '<span class="muted">general visit</span>'],
+    ['GPS', gps],
+    ['AI advisory', v.ai_administered === true ? '<b style="color:var(--ok)">✓ Yes</b>'
+                  : (v.ai_administered === false ? '✗ No' : '<span class="muted">not answered</span>')],
+    ['Issue', v.issue ? '<span style="color:var(--danger)">' + esc(v.issue) + '</span>' : null],
+    ['Sample', v.sample_collected ? esc(v.sample_id || '✓ collected') : null],
+    ['Notes', v.notes ? esc(v.notes) : null]
+  ].filter(function (r) { return r[1] != null; });
+  return '<table class="dash-table"><tbody>' + rows.map(function (r) {
+    return '<tr><td style="color:var(--grey);white-space:nowrap">' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+  }).join('') + '</tbody></table>';
+}
+function visitReadingsTable(readings) {
+  if (!readings || !readings.length) return '<p class="muted small mt8">No soil data on this visit.</p>';
+  var by = {};
+  readings.forEach(function (r) { (by[r.parameter] = by[r.parameter] || {})[r.replicate] = r; });
+  return '<h3 class="mt12">Soil readings</h3>' +
+    '<div class="scroll-x"><table class="readings-table"><thead><tr><th></th><th>R1</th><th>R2</th><th>R3</th></tr></thead><tbody>' +
+    PARAMS.filter(function (p2) { return by[p2.key]; }).map(function (p2) {
+      return '<tr><td>' + esc(p2.label) + (p2.unit ? '<span class="unit">' + esc(p2.unit) + '</span>' : '') + '</td>' +
+        [1, 2, 3].map(function (rep2) {
+          var r = by[p2.key][rep2];
+          return '<td style="text-align:center">' + (r && r.value != null ? esc(r.value) : '—') + '</td>';
+        }).join('') + '</tr>';
+    }).join('') + '</tbody></table></div>';
+}
+function visitPhotosHTML(photos) {
+  if (!photos || !photos.length) return '';
+  return '<h3 class="mt12">Photos</h3>' + photos.map(function (ph) {
+    return '<img class="modal-photo" src="data:' + (ph.mime || 'image/jpeg') + ';base64,' + ph.data_base64 + '" alt="visit photo">';
+  }).join('');
+}
+function visitDetailModal(id) {
+  var local = S.queue.find(function (r) { return r.id === id; });
+  if (local) {
+    var st = siteById(local.site_id) || {};
+    var fm = local.farmer_id ? (farmers().find(function (x) { return x.id === local.farmer_id; }) || {}).name : null;
+    var farmLabel = (farms().find(function (x) { return x.id === local.farm_id; }) || {}).label;
+    showModal('Visit details',
+      '<p class="small"><span class="chip state-' + local.state + '">' + local.state + '</span>' +
+      (local.error ? ' <span class="small" style="color:var(--danger)">' + esc(local.error) + '</span>' : '') + '</p>' +
+      visitDetailRows({
+        submitted_at: local.submitted_at, updated_at: local.updated_at,
+        site: st.sub_area, farm: farmLabel, farmer: fm,
+        gps_lat: local.gps && local.gps.lat, gps_lon: local.gps && local.gps.lon,
+        gps_accuracy_m: local.gps && local.gps.accuracy_m,
+        ai_administered: local.ai_administered, issue: local.issue,
+        sample_collected: local.sample_collected, sample_id: local.sample_id, notes: local.notes
+      }) +
+      visitReadingsTable(local.readings) +
+      visitPhotosHTML(local.photos) +
+      (S.me && S.me.role === 'supervisor'
+        ? '<a class="btn btn-outline btn-block mt12" href="#/visit?edit=' + local.id + '">Open / edit this visit</a>' : ''));
+    return;
+  }
+  if (!navigator.onLine) { toast('Connect to view visit details'); return; }
+  showModal('Visit details', '<p class="muted small">Loading…</p>');
+  rpc('fs_visit_detail', { p_token: S.token, p_visit_id: id }).then(function (d) {
+    var body = $('#modalBody'); if (!body) return;
+    body.innerHTML = visitDetailRows(d.visit || {}) +
+      visitReadingsTable(d.readings) +
+      visitPhotosHTML(d.photos);
+  }).catch(function (err) {
+    var body = $('#modalBody');
+    if (body && !handleAuthError(err)) body.innerHTML = '<p class="small" style="color:var(--danger)">' + esc(err.message) + '</p>';
+  });
+}
+function actRowHTML(v) {
+  return '<div class="queue-item act-row" data-visit="' + v.id + '">' +
+    '<div class="row spread"><b>' + esc(v.supervisor) + ' · ' + esc(v.site) + '</b>' +
+    '<span class="muted small">' + fmtWhen(v.synced_at) + '</span></div>' +
+    '<div class="muted small">' +
+    (v.farmer ? '👤 ' + esc(v.farmer) + ' · ' : '') +
+    (v.ai_administered === true ? 'AI ✓' : 'AI ✗') +
+    (v.readings_count ? ' · ' + v.readings_count + ' readings' : '') +
+    (v.gps_lat == null ? ' · <span class="flag">no GPS</span>'
+      : (v.gps_flag ? ' · <span class="flag">' + fmtDist(v.distance_from_site_m) + ' away ⚠</span>' : '')) +
+    (Number(v.out_of_range) ? ' · <span class="flag">' + v.out_of_range + ' out-of-range</span>' : '') +
+    (Number(v.photos) ? ' · ' + v.photos + '📷' : '') +
+    '</div>' +
+    (v.issue ? '<div class="small" style="color:var(--danger)">' + esc(v.issue) + '</div>' : '') +
+    '</div>';
+}
+function siteVisitsModal(siteName) {
+  function open(act) {
+    var rows = ((act && act.visits) || []).filter(function (v) { return v.site === siteName; });
+    showModal('Visits — ' + siteName,
+      rows.length ? rows.map(actRowHTML).join('') : '<p class="muted small">No synced visits at this site yet.</p>');
+  }
+  if (S._act) { open(S._act); return; }
+  if (!navigator.onLine || !S.me || S.me.role === 'supervisor') { toast('No visit list available'); return; }
+  rpc('fs_activity', { p_token: S.token }).then(function (a) { S._act = a; open(a); })
+    .catch(function (err) { if (!handleAuthError(err)) toast(err.message); });
 }
 function copyrightHTML() {
   return '<p class="copyright">© ' + new Date().getFullYear() +
@@ -563,10 +701,18 @@ function statModal(key) {
         .map(function (x) { return [esc2(x.name), x.visits_7d]; })) +
       (pend ? '<div class="nudge warn mt8">' + pend + ' visit(s) on this phone not yet synced</div>' : ''));
   } else if (key === 'visits_total') {
-    showModal('Visits by site', miniTable(sites2.filter(function (x) { return Number(x.visits); })
-      .sort(function (a, b) { return b.visits - a.visits; })
-      .map(function (x) { return [esc2(x.sub_area), x.visits + ' visit' + (Number(x.visits) === 1 ? '' : 's')]; })) ||
-      '<p class="muted">No synced visits yet.</p>');
+    var siteRows = sites2.filter(function (x) { return Number(x.visits); })
+      .sort(function (a, b) { return b.visits - a.visits; });
+    var staffDrill = S.me && S.me.role !== 'supervisor';
+    showModal('Visits by site', siteRows.length
+      ? (staffDrill ? '<p class="muted small">Tap a site to see its visits.</p>' : '') +
+        siteRows.map(function (x) {
+          return '<div class="hbar-row' + (staffDrill ? ' act-row' : '') + '"' +
+            (staffDrill ? ' data-sitevisits="' + esc2(x.sub_area) + '"' : '') + '>' +
+            '<span class="hbar-label" style="flex:1">' + esc2(x.sub_area) + '</span>' +
+            '<span class="hbar-val">' + x.visits + ' visit' + (Number(x.visits) === 1 ? '' : 's') + (staffDrill ? ' ›' : '') + '</span></div>';
+        }).join('')
+      : '<p class="muted">No synced visits yet.</p>');
   } else if (key === 'farmers_engaged') {
     showModal('Farmer engagement', '<p class="muted small">A farmer counts as engaged once at least one synced visit records them.</p>' +
       miniTable(sites2.map(function (x) { return [esc2(x.sub_area), (x.farmers_engaged || 0) + ' / ' + (x.farmers_total || 0)]; })));
@@ -575,10 +721,10 @@ function statModal(key) {
       miniTable((prog.supervisors || []).filter(function (x) { return x.role === 'supervisor'; })
         .map(function (x) { return [esc2(x.name), (x.ai_visits || 0) + ' of ' + (x.visits || 0) + ' visits']; })));
   } else if (key === 'issues') {
-    var list = (act && act.visits ? act.visits.filter(function (v) { return v.issue; }).slice(0, 8) : []);
+    var list = (act && act.visits ? act.visits.filter(function (v) { return v.issue; }).slice(0, 10) : []);
     showModal('Issues logged', list.length
-      ? list.map(function (v) {
-          return '<div class="queue-item"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
+      ? '<p class="muted small">Tap an issue for the full visit.</p>' + list.map(function (v) {
+          return '<div class="queue-item act-row" data-visit="' + v.id + '"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
             '<div class="small" style="color:var(--danger)">' + esc2(v.issue) + '</div></div>';
         }).join('')
       : '<p class="muted small">Issues reported by Field Supervisors during visits appear here.' +
@@ -612,14 +758,15 @@ function statModal(key) {
       })));
   } else if (key === 'flags') {
     var fl = ((S._act || {}).visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); }).slice(0, 10);
-    showModal('Data-quality flags', fl.length ? fl.map(function (v) {
-      var why = [];
-      if (v.gps_lat == null) why.push('no GPS');
-      else if (v.gps_flag) why.push(fmtDist(v.distance_from_site_m) + ' from site');
-      if (Number(v.out_of_range)) why.push(v.out_of_range + ' reading(s) out of range');
-      return '<div class="queue-item"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
-        '<div class="small" style="color:var(--warn)">' + esc2(why.join(' · ')) + '</div></div>';
-    }).join('') : '<p class="muted small">No flagged visits.</p>');
+    showModal('Data-quality flags', fl.length
+      ? '<p class="muted small">Tap a row for the full visit.</p>' + fl.map(function (v) {
+        var why = [];
+        if (v.gps_lat == null) why.push('no GPS');
+        else if (v.gps_flag) why.push(fmtDist(v.distance_from_site_m) + ' from site');
+        if (Number(v.out_of_range)) why.push(v.out_of_range + ' reading(s) out of range');
+        return '<div class="queue-item act-row" data-visit="' + v.id + '"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
+          '<div class="small" style="color:var(--warn)">' + esc2(why.join(' · ')) + '</div></div>';
+      }).join('') : '<p class="muted small">No flagged visits.</p>');
   } else if (key === 'farmers_listed') {
     showModal('Farmers by site', miniTable(sites2.map(function (x) {
       return [esc2(x.sub_area), x.farmers_total || 0]; })));
@@ -640,9 +787,12 @@ function siteRow(s, p, validation) {
     right = '<span class="chip grey">' + p.visits + ' visit' + (Number(p.visits) === 1 ? '' : 's') + '</span>';
   }
   var tappable = canVisit(s.id);
+  var staffDrill = S.me && S.me.role !== 'supervisor';
   return (tappable
       ? '<a class="site-item" href="#/visit?site=' + s.id + '">'
-      : '<span class="site-item" style="opacity:.75">') +
+      : (staffDrill
+          ? '<span class="site-item act-row" data-sitevisits="' + esc(s.sub_area) + '">'
+          : '<span class="site-item" style="opacity:.75">')) +
     '<span class="site-dot" style="background:' + color + '"></span>' +
     '<span class="site-main"><span class="site-name">' + esc(s.sub_area) +
     (s.rc !== s.sub_area ? ' <span class="muted small">(' + esc(s.rc) + ' RC)</span>' : '') +
@@ -653,6 +803,8 @@ function siteRow(s, p, validation) {
 function bindSites() {
   $('#btnLogout').onclick = confirmLogout;
   $('#view').onclick = function (e) {
+    var sv = e.target.closest && e.target.closest('[data-sitevisits]');
+    if (sv) { siteVisitsModal(sv.getAttribute('data-sitevisits')); return; }
     var k = e.target.closest && e.target.closest('[data-modal]');
     if (k) statModal(k.getAttribute('data-modal'));
   };
@@ -761,7 +913,7 @@ function prodLabel(p) {
   return p === 'H' ? 'Horticulture' : (p === 'A' ? 'Agronomy' : (p === 'H+A' ? 'Horticulture + Agronomy' : null));
 }
 function farmerVisitRow(v, localState) {
-  return '<div class="queue-item">' +
+  return '<div class="queue-item act-row" data-visit="' + v.id + '">' +
     '<div class="row spread"><b>' + fmtWhen(v.submitted_at || v.synced_at || v.updated_at) + '</b>' +
     (localState ? '<span class="chip state-' + localState + '">' + localState + '</span>'
                 : (v.supervisor ? '<span class="chip grey">' + esc(v.supervisor) + '</span>' : '')) + '</div>' +
@@ -1527,6 +1679,15 @@ function renderDash(prog, act) {
   var t = prog.totals, g = prog.targets;
   var html = '';
 
+  // recent activity first — latest 5, tap a row for full detail, View all for the rest
+  var allVisits = act.visits || [];
+  html += '<div class="card"><div class="row spread"><h2>Recent activity</h2>' +
+    (allVisits.length > 5 ? '<button class="btn btn-outline btn-sm" id="btnAllActivity">View all (' + allVisits.length + ')</button>' : '') +
+    '</div>' +
+    (allVisits.length ? allVisits.slice(0, 5).map(actRowHTML).join('')
+                      : '<p class="muted small">No synced visits yet.</p>') +
+    '</div>';
+
   // intelligence strip: at most 4 aggregated, tappable items — never a wall of rows
   var fsAll = (prog.supervisors || []).filter(function (sp) { return sp.role === 'supervisor' && sp.active !== false; });
   var unstarted = fsAll.filter(function (sp) { return !sp.last_synced_at; });
@@ -1617,26 +1778,7 @@ function renderDash(prog, act) {
     '<button class="btn btn-primary btn-block" id="btnAddMember">Add member</button>' : '') +
     '</div>';
 
-  // activity feed
-  html += '<div class="card"><h2>Recent activity</h2><div class="scroll-x"><table class="dash-table"><thead><tr>' +
-    '<th>When</th><th>Who / where</th><th>GPS</th><th>Data</th></tr></thead><tbody>' +
-    (act.visits || []).slice(0, 60).map(function (v) {
-      var gps = v.gps_lat == null ? '<span class="flag">no GPS</span>'
-        : (v.gps_flag ? '<span class="flag">' + fmtDist(v.distance_from_site_m) + ' away ⚠</span>'
-                      : fmtDist(v.distance_from_site_m));
-      var data = (v.ai_administered ? '<span class="chip" style="margin-right:4px">AI ✓</span>' : '') +
-        (v.readings_count ? v.readings_count + ' readings' : 'no soil data') +
-        (Number(v.out_of_range) ? ' · <span class="flag">' + v.out_of_range + ' out-of-range</span>' : '') +
-        (v.sample_collected ? '<br>sample ' + esc(v.sample_id || '✓') : '') +
-        (Number(v.photos) ? ' · ' + v.photos + '📷' : '') +
-        (v.issue ? '<br><span class="flag">issue:</span> ' + esc(v.issue) : '');
-      return '<tr><td>' + fmtWhen(v.synced_at) + '</td>' +
-        '<td><b>' + esc(v.supervisor) + '</b><br>' + esc(v.site) + (v.farm ? ' · ' + esc(v.farm) : '') +
-        (v.farmer ? '<br>👤 ' + esc(v.farmer) : '') + '</td>' +
-        '<td>' + gps + '</td><td>' + data + '</td></tr>';
-    }).join('') + '</tbody></table></div>' +
-    ((act.visits || []).length === 0 ? '<p class="muted small mt8">No synced visits yet.</p>' : '') +
-    '</div>' + copyrightHTML();
+  html += copyrightHTML();
 
   el.innerHTML = html;
 
@@ -1650,6 +1792,12 @@ function renderDash(prog, act) {
   });
   // onclick property: #dashBody persists across bindDash refreshes
   el.onclick = function (e) {
+    if (e.target.id === 'btnAllActivity') {
+      showModal('All activity', (act.visits || []).map(actRowHTML).join(''));
+      return;
+    }
+    var vEl = e.target.closest && e.target.closest('[data-visit]');
+    if (vEl) { visitDetailModal(vEl.getAttribute('data-visit')); return; }
     var mk = e.target.closest && e.target.closest('[data-modal]');
     if (mk) { statModal(mk.getAttribute('data-modal')); return; }
     var pinId = e.target.getAttribute('data-pin');

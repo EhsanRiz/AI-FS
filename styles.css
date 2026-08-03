@@ -406,3 +406,9 @@ button.nudge { font:inherit; cursor:pointer; }
 @media (max-width: 899px) {
   .staff-nav { display: none; }
 }
+
+/* ---- v9: drill-down modals ---- */
+.modal-back { right: auto; left: 10px; }
+.act-row { cursor: pointer; }
+.act-row:active { background: #f6f5f0; }
+.modal-photo { width: 100%; border-radius: 12px; margin-top: 8px; border: 1px solid var(--line); }
