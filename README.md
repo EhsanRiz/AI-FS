@@ -1,11 +1,12 @@
-# AI-FS — FS Field Monitoring PWA
+# AI-FS — Field Supervisor Monitoring PWA
 
-Offline-first Progressive Web App for monitoring Field Supervisor (FS) soil-data-collection
-work in the **AI-Powered Extension for Agricultural Resilience** project (4D Climate Solutions,
-Lesotho, with University of Virginia & National University of Lesotho). Covers the 17 resource
-centres / 18 sub-areas and the sensor-vs-lab validation plan: 3 farms per validation site ×
-3 readings × 5 soil parameters (moisture, temperature, pH, EC, NPK) + a 0–20 cm topsoil sample
-per farm for paired lab analysis.
+Offline-first Progressive Web App for monitoring **Field Supervisor activity** in the
+**AI-Powered Extension for Agricultural Resilience** project (4D Climate Solutions, Lesotho,
+with University of Virginia & National University of Lesotho). Field Supervisors log farmer
+visits (who they saw, whether the AI advisory was administered, any issues observed), register
+new farmers in their area, and — when applicable — capture soil-sensor validation data
+(3 farms per validation site × 3 readings × 5 parameters + 0–20 cm topsoil samples).
+339 profiled farmers across the 18 sub-areas are pre-loaded from the AI Farm Data workbook.
 
 **No build step.** Plain HTML/JS/CSS served statically from the repo root.
 
@@ -44,8 +45,9 @@ as a PWA from the browser menu on phones.
 | Screen | Who | What |
 |---|---|---|
 | Sites | all | Validation-site targets + progress, all 18 sub-areas, start a visit |
+| Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register new farmer (works offline), jump to a visit |
 | Map | all | Leaflet map, district colours, validation sites ringed gold |
-| Visit form | all | Site → farm → GPS capture (distance vs known coords) → 3×7 readings grid (moisture, temp, pH, EC, N, P, K) → sample flag + ID → up to 2 photos (downscaled) → notes |
+| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (distance vs known coords) → AI advisory administered? → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → up to 2 photos → notes |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
 | Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
 

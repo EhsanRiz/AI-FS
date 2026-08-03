@@ -768,3 +768,25 @@ end $$;
 -- Assign / change a station:
 --   update fs_supervisors set assigned_site_ids = array[<site_id>[, <site_id>]]
 --   where username = '<username>';
+
+-- =============================================================================
+-- v4 (2026-08): farmer register/engagement, AI-administered flag, issues,
+-- optional soil data. Applied as migration fs_farmers_ai_and_issues.
+-- Summary of changes (full bodies live in the applied migration):
+--   * new table fs_farmers (id, site_id, name, village, gender, age, production,
+--     field_size, crops, system, phone, source profiled|fs_registered,
+--     registered_by, active) — deny-all RLS; 339 profiled farmers seeded from
+--     the "AI Farm Data in Resource Centre" workbook (matched to sites by GPS).
+--   * fs_visits gains farmer_id (FK), ai_administered boolean, issue text.
+--   * new RPC fs_register_farmer(p_token, p_farmer jsonb) — idempotent by
+--     client uuid, station-locked, records registered_by.
+--   * fs_submit_visit accepts farmer_id/ai_administered/issue and validates
+--     the farmer belongs to the visit's site.
+--   * fs_bootstrap returns 'farmers' scoped to the supervisor's station(s).
+--   * fs_progress totals add farmers, farmers_engaged, ai_visits, issues;
+--     per-site adds farmers_total / farmers_engaged.
+--   * fs_activity visit rows add farmer name, ai_administered, issue; team rows
+--     add farmers_registered.
+-- To rebuild a fresh project: run this file, then re-apply migration
+-- fs_farmers_ai_and_issues from the Supabase dashboard history (or ask Claude
+-- to re-emit it), then re-seed farmers from the workbook.

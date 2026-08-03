@@ -33,6 +33,7 @@ var S = {
   me: readJSON('fsm_me'),
   boot: readJSON('fsm_boot'),       // {sites, farms, progress} cached from server
   queue: [],                        // local visit records from IndexedDB
+  regQueue: [],                     // local farmer registrations awaiting sync
   syncing: false,
   map: null
 };
@@ -55,6 +56,20 @@ function visitableSites() {
 }
 function canVisit(siteId) {
   return visitableSites().some(function (s) { return s.id === Number(siteId); });
+}
+function farmers() {
+  var base = (S.boot && S.boot.farmers) || [];
+  var localIds = {};
+  base.forEach(function (f) { localIds[f.id] = true; });
+  var pending = S.regQueue.filter(function (r) { return !localIds[r.id]; }).map(function (r) {
+    return { id: r.id, site_id: r.site_id, name: r.name, village: r.village, gender: r.gender,
+             age: r.age, phone: r.phone, source: 'fs_registered', _state: r.state };
+  });
+  return base.concat(pending);
+}
+function farmersOf(siteId) {
+  return farmers().filter(function (f) { return f.site_id === Number(siteId); })
+    .sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
 function copyrightHTML() {
   return '<p class="copyright">© ' + new Date().getFullYear() +
@@ -132,36 +147,38 @@ var idb = {
   open: function () {
     if (idb._db) return Promise.resolve(idb._db);
     return new Promise(function (resolve, reject) {
-      var req = indexedDB.open('fsm', 1);
+      var req = indexedDB.open('fsm', 2);
       req.onupgradeneeded = function () {
-        req.result.createObjectStore('visits', { keyPath: 'id' });
+        var db = req.result;
+        if (!db.objectStoreNames.contains('visits')) db.createObjectStore('visits', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('farmers')) db.createObjectStore('farmers', { keyPath: 'id' });
       };
       req.onsuccess = function () { idb._db = req.result; resolve(req.result); };
       req.onerror = function () { reject(req.error); };
     });
   },
-  put: function (rec) {
+  put: function (store, rec) {
     return idb.open().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction('visits', 'readwrite');
-        tx.objectStore('visits').put(rec);
+        var tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).put(rec);
         tx.oncomplete = resolve; tx.onerror = function () { reject(tx.error); };
       });
     });
   },
-  del: function (id) {
+  del: function (store, id) {
     return idb.open().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction('visits', 'readwrite');
-        tx.objectStore('visits').delete(id);
+        var tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).delete(id);
         tx.oncomplete = resolve; tx.onerror = function () { reject(tx.error); };
       });
     });
   },
-  all: function () {
+  all: function (store) {
     return idb.open().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var req = db.transaction('visits').objectStore('visits').getAll();
+        var req = db.transaction(store).objectStore(store).getAll();
         req.onsuccess = function () { resolve(req.result || []); };
         req.onerror = function () { reject(req.error); };
       });
@@ -169,9 +186,11 @@ var idb = {
   }
 };
 function loadQueue() {
-  return idb.all().then(function (rows) {
+  return Promise.all([idb.all('visits'), idb.all('farmers')]).then(function (res) {
+    var rows = res[0];
     rows.sort(function (a, b) { return (b.updated_at || '').localeCompare(a.updated_at || ''); });
     S.queue = rows;
+    S.regQueue = res[1];
     return rows;
   });
 }
@@ -189,15 +208,39 @@ function syncAll(manual) {
   S.syncing = true;
   updateNetDot();
   return loadQueue().then(function () {
-    var todo = S.queue.filter(function (r) { return r.state === 'queued' || r.state === 'failed'; });
     var chain = Promise.resolve();
     var okCount = 0, failCount = 0;
+    // farmer registrations sync first so visits referencing them don't bounce
+    S.regQueue.filter(function (r) { return r.state === 'queued' || r.state === 'failed'; })
+      .forEach(function (reg) {
+        chain = chain.then(function () {
+          return rpc('fs_register_farmer', {
+            p_token: S.token,
+            p_farmer: { id: reg.id, site_id: reg.site_id, name: reg.name, village: reg.village,
+                        gender: reg.gender, age: reg.age, phone: reg.phone }
+          }).then(function () {
+            reg.state = 'synced';
+            reg.error = null;
+            return idb.put('farmers', reg);
+          }).catch(function (err) {
+            if (handleAuthError(err)) throw err;
+            reg.state = 'failed';
+            reg.error = err.message;
+            failCount++;
+            return idb.put('farmers', reg);
+          });
+        });
+      });
+    var todo = S.queue.filter(function (r) { return r.state === 'queued' || r.state === 'failed'; });
     todo.forEach(function (rec) {
       chain = chain.then(function () {
         return rpc('fs_submit_visit', {
           p_token: S.token,
           p_visit: {
             id: rec.id, site_id: rec.site_id, farm_id: rec.farm_id || null,
+            farmer_id: rec.farmer_id || null,
+            ai_administered: rec.ai_administered === true,
+            issue: rec.issue || null,
             gps_lat: rec.gps ? rec.gps.lat : null, gps_lon: rec.gps ? rec.gps.lon : null,
             gps_accuracy_m: rec.gps ? rec.gps.accuracy_m : null,
             started_at: rec.started_at, submitted_at: rec.submitted_at,
@@ -214,13 +257,13 @@ function syncAll(manual) {
           rec.server_distance_m = res && res.distance_from_site_m != null ? Number(res.distance_from_site_m) : null;
           rec.synced_at = new Date().toISOString();
           okCount++;
-          return idb.put(rec);
+          return idb.put('visits', rec);
         }).catch(function (err) {
           if (handleAuthError(err)) throw err;
           rec.state = 'failed';
           rec.error = err.message;
           failCount++;
-          return idb.put(rec);
+          return idb.put('visits', rec);
         });
       });
     });
@@ -281,6 +324,7 @@ function render() {
 
   var view = $('#view');
   if (route.indexOf('/visit') === 0) { view.innerHTML = viewVisit(route); bindVisit(); }
+  else if (route === '/farmers') { view.innerHTML = viewFarmers(); bindFarmers(); }
   else if (route === '/map') { view.innerHTML = viewMap(); bindMap(); }
   else if (route === '/queue') { view.innerHTML = viewQueue(); bindQueue(); }
   else if (route === '/dash') { view.innerHTML = viewDash(); bindDash(); }
@@ -302,7 +346,8 @@ var ICONS = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>',
   map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>',
   queue: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>',
-  dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="17" y="3" width="4" height="17" rx="1"/></svg>'
+  dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="17" y="3" width="4" height="17" rx="1"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.9 5 4.8"/></svg>'
 };
 
 function navHTML(route) {
@@ -310,6 +355,7 @@ function navHTML(route) {
   var isMgr = S.me && S.me.role === 'manager';
   var items = [
     { href: '#/home', icon: 'home', label: 'Sites', active: route === '/home' || route.indexOf('/visit') === 0 },
+    { href: '#/farmers', icon: 'users', label: 'Farmers', active: route === '/farmers' },
     { href: '#/map', icon: 'map', label: 'Map', active: route === '/map' },
     { href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pend }
   ];
@@ -333,9 +379,9 @@ function updateNetDot() {
 /* ----------------------------------------------------------------- login -- */
 function viewLogin() {
   return '<main id="view"><div class="login-wrap">' +
-    '<img class="login-logo-img" src="assets/logo-mark.svg?v=1" alt="4D Climate Solutions">' +
+    '<img class="login-logo-img" src="assets/logo-4dcs.png?v=1" alt="4D Climate Solutions">' +
     '<h1>FS Field Monitoring</h1>' +
-    '<p class="tagline muted">Soil data collection — AI-Powered Extension for Agricultural Resilience</p>' +
+    '<p class="tagline muted">Field Supervisor Monitoring — AI-Powered Extension for Agricultural Resilience</p>' +
     '<div class="card">' +
     '<div id="loginError"></div>' +
     '<div class="field"><label>First name (or phone number)</label>' +
@@ -464,6 +510,71 @@ function confirmLogout() {
   if (confirm(msg)) doLogout();
 }
 
+/* --------------------------------------------------------------- farmers -- */
+var farmerSearch = '';
+function viewFarmers() {
+  var vSites = visitableSites();
+  var q = farmerSearch.toLowerCase();
+  var html = '<div class="field" style="margin-bottom:10px">' +
+    '<input id="farmerSearch" type="search" placeholder="Search farmers…" value="' + esc(farmerSearch) + '"></div>';
+
+  html += '<div class="card"><h3>Register a new farmer</h3>' +
+    (vSites.length > 1
+      ? '<div class="field"><label>Site</label><select id="rfSite"><option value="">Choose…</option>' +
+        vSites.map(function (st) { return '<option value="' + st.id + '">' + esc(st.sub_area) + '</option>'; }).join('') + '</select></div>'
+      : '') +
+    '<div class="field"><label>Farmer full name</label><input id="rfName" type="text"></div>' +
+    '<div class="row"><div class="field" style="flex:1"><label>Village</label><input id="rfVillage" type="text"></div>' +
+    '<div class="field" style="flex:0 0 90px"><label>Age</label><input id="rfAge" type="text" inputmode="numeric"></div></div>' +
+    '<div class="row"><div class="field" style="flex:1"><label>Gender</label><select id="rfGender">' +
+    '<option value="">—</option><option value="F">Female</option><option value="M">Male</option></select></div>' +
+    '<div class="field" style="flex:1"><label>Phone</label><input id="rfPhone" type="tel"></div></div>' +
+    '<button class="btn btn-primary btn-block" id="btnRegFarmer">Register farmer</button></div>';
+
+  vSites.forEach(function (st) {
+    var list = farmersOf(st.id).filter(function (f) {
+      return !q || (f.name + ' ' + (f.village || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    html += '<div class="card"><h2>' + esc(st.sub_area) + ' <span class="muted small">(' + list.length + ' farmers)</span></h2>' +
+      (list.length ? list.map(function (f) {
+        var meta = [f.village, f.age ? f.age + ' yrs' : null,
+                    f.gender === 'F' ? 'Female' : (f.gender === 'M' ? 'Male' : null),
+                    f.production].filter(Boolean).join(' · ');
+        return '<div class="site-item">' +
+          '<span class="site-main"><span class="site-name">' + esc(f.name) +
+          (f.source === 'fs_registered' ? ' <span class="chip blue">new</span>' : '') +
+          (f._state && f._state !== 'synced' ? ' <span class="chip state-' + f._state + '">' + f._state + '</span>' : '') +
+          '</span><span class="site-meta">' + esc(meta || '—') + '</span></span>' +
+          '<a class="btn btn-outline btn-sm" href="#/visit?site=' + st.id + '&farmer=' + f.id + '">Visit</a>' +
+          '</div>';
+      }).join('') : '<p class="muted small">No farmers match.</p>') + '</div>';
+  });
+  html += copyrightHTML();
+  return html;
+}
+function bindFarmers() {
+  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#farmerSearch').addEventListener('input', function () {
+    farmerSearch = this.value;
+    var v = $('#view');
+    var pos = this.selectionStart;
+    v.innerHTML = viewFarmers(); bindFarmers();
+    var inp = $('#farmerSearch');
+    inp.focus(); inp.setSelectionRange(pos, pos);
+  });
+  $('#btnRegFarmer').addEventListener('click', function () {
+    var vSites = visitableSites();
+    var siteId = vSites.length === 1 ? vSites[0].id : Number(($('#rfSite') || {}).value || 0);
+    registerFarmer({
+      site_id: siteId || null,
+      name: $('#rfName').value, village: $('#rfVillage').value,
+      gender: $('#rfGender').value, age: $('#rfAge').value, phone: $('#rfPhone').value
+    }, function () {
+      var v = $('#view'); v.innerHTML = viewFarmers(); bindFarmers();
+    });
+  });
+}
+
 /* ------------------------------------------------------------------- map -- */
 function viewMap() {
   return '<div id="map"></div>' +
@@ -517,6 +628,9 @@ function blankVisit(siteId) {
     submitted_at: null,
     sample_collected: false,
     sample_id: '',
+    farmer_id: null,
+    ai_administered: false,
+    issue: '',
     notes: '',
     readings: [],     // [{parameter, replicate, value, unit}]
     photos: [],       // [{id, mime, data_base64}]
@@ -541,9 +655,13 @@ function viewVisit(route) {
     var pre = q.site ? Number(q.site) : defaultSiteId();
     if (pre && !canVisit(pre)) pre = defaultSiteId();
     form = blankVisit(pre);
+    if (q.farmer && pre) form.farmer_id = q.farmer;
   }
   var site = form.site_id ? siteById(form.site_id) : null;
   var fList = form.site_id ? farmsOf(form.site_id) : [];
+  var fmList = form.site_id ? farmersOf(form.site_id) : [];
+  var soilOn = form._soil != null ? form._soil
+    : ((form.readings || []).length > 0 || !!form.sample_collected);
 
   var html = '<div class="card"><h2>' + (form.state !== 'draft' ? 'Edit visit' : 'New field visit') + '</h2>';
 
@@ -565,11 +683,44 @@ function viewVisit(route) {
     html += '<p class="muted small" style="margin-bottom:12px">Not a validation site — general visit (no farm targets).</p>';
   }
 
+  // farmer
+  if (site) {
+    html += '<div class="field"><label>Farmer</label><select id="fFarmer">' +
+      '<option value="">— General visit (no specific farmer) —</option>' +
+      fmList.map(function (f) {
+        return '<option value="' + f.id + '"' + (form.farmer_id === f.id ? ' selected' : '') + '>' +
+          esc(f.name) + (f.village ? ' — ' + esc(f.village) : '') + '</option>';
+      }).join('') + '</select>' +
+      '<button type="button" class="btn btn-outline btn-sm mt8" id="btnNewFarmer">+ Register new farmer</button>' +
+      '<div id="newFarmerBox" class="mt8" style="display:none;border:1.5px dashed var(--line);border-radius:12px;padding:12px">' +
+      '<div class="field"><label>Farmer full name</label><input id="nfName" type="text"></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label>Village</label><input id="nfVillage" type="text"></div>' +
+      '<div class="field" style="flex:0 0 90px"><label>Age</label><input id="nfAge" type="text" inputmode="numeric"></div></div>' +
+      '<div class="row"><div class="field" style="flex:1"><label>Gender</label><select id="nfGender">' +
+      '<option value="">—</option><option value="F">Female</option><option value="M">Male</option></select></div>' +
+      '<div class="field" style="flex:1"><label>Phone</label><input id="nfPhone" type="tel"></div></div>' +
+      '<button type="button" class="btn btn-secondary btn-block" id="btnSaveFarmer">Save farmer</button>' +
+      '</div></div>';
+  }
+
   // GPS
   html += '<div class="field"><label>GPS location</label><div class="gps-box">' +
     '<button type="button" class="btn btn-secondary btn-sm" id="btnGps">⌖ Capture</button>' +
     '<span class="gps-status" id="gpsStatus">' + gpsStatusHTML() + '</span></div></div>';
   html += '</div>';
+
+  // visit activity: AI advisory + issues
+  html += '<div class="card"><h2>Visit activity</h2>' +
+    '<div class="toggle-row"><span style="font-weight:700">AI advisory administered?</span>' +
+    '<span class="switch"><input type="checkbox" id="fAI"' + (form.ai_administered ? ' checked' : '') + '><span class="track"></span></span></div>' +
+    '<div class="field mt8"><label>Specific issue observed (optional)</label>' +
+    '<textarea id="fIssue" placeholder="e.g. pest outbreak, sensor fault, farmer unavailable…">' + esc(form.issue || '') + '</textarea></div>' +
+    '</div>';
+
+  // soil data — optional, off by default (not every visit collects soil data)
+  html += '<div class="card"><div class="toggle-row"><span style="font-weight:700">Soil data collected this visit?</span>' +
+    '<span class="switch"><input type="checkbox" id="fSoil"' + (soilOn ? ' checked' : '') + '><span class="track"></span></span></div></div>';
+  html += '<div id="soilWrap" style="' + (soilOn ? '' : 'display:none') + '">';
 
   // readings
   html += '<div class="card"><h2>Sensor readings</h2>' +
@@ -591,7 +742,8 @@ function viewVisit(route) {
     '<div class="field mt8" id="sampleIdWrap" style="' + (form.sample_collected ? '' : 'display:none') + '">' +
     '<label>Sample ID (write the same ID on the bag)</label>' +
     '<input id="fSampleId" type="text" placeholder="e.g. KOLO-F1-001" value="' + esc(form.sample_id) + '"></div>' +
-    '</div>';
+    '</div>' +
+    '</div>';  // /soilWrap
 
   html += '<div class="card"><h2>Photos & notes</h2>' +
     '<div class="photo-strip" id="photoStrip">' + photoStripHTML() + '</div>' +
@@ -667,6 +819,34 @@ function bindVisit() {
     $('#sampleIdWrap').style.display = this.checked ? '' : 'none';
   });
 
+  var farmerSel = $('#fFarmer');
+  if (farmerSel) {
+    farmerSel.addEventListener('change', function () { form.farmer_id = this.value || null; });
+  }
+  var btnNF = $('#btnNewFarmer');
+  if (btnNF) {
+    btnNF.addEventListener('click', function () {
+      var box = $('#newFarmerBox');
+      box.style.display = box.style.display === 'none' ? '' : 'none';
+    });
+    $('#btnSaveFarmer').addEventListener('click', function () {
+      captureFormText();
+      registerFarmer({
+        site_id: form.site_id,
+        name: $('#nfName').value, village: $('#nfVillage').value,
+        gender: $('#nfGender').value, age: $('#nfAge').value, phone: $('#nfPhone').value
+      }, function (reg) {
+        form.farmer_id = reg.id;
+        rerenderVisit();
+      });
+    });
+  }
+  $('#fAI').addEventListener('change', function () { form.ai_administered = this.checked; });
+  $('#fSoil').addEventListener('change', function () {
+    form._soil = this.checked;
+    $('#soilWrap').style.display = this.checked ? '' : 'none';
+  });
+
   var photoInput = $('#fPhoto');
   // onclick property (not addEventListener): rerenderVisit keeps the same #view
   // element, so a listener would stack up on every partial re-render.
@@ -691,6 +871,26 @@ function bindVisit() {
   $('#btnSave').addEventListener('click', function () { saveVisit(true); });
   $('#btnDraft').addEventListener('click', function () { saveVisit(false); });
 }
+function registerFarmer(data, done) {
+  var name = (data.name || '').trim();
+  if (!data.site_id) { toast('Choose a site first'); return; }
+  if (name.length < 3) { toast('Enter the farmer\'s full name'); return; }
+  if (!canVisit(data.site_id)) { toast('You can only register farmers at your own station'); return; }
+  var reg = {
+    id: uuid(), site_id: Number(data.site_id), name: name,
+    village: (data.village || '').trim() || null,
+    gender: (data.gender || '').trim() || null,
+    age: /^\d{1,3}$/.test((data.age || '').trim()) ? Number(data.age) : null,
+    phone: (data.phone || '').trim() || null,
+    state: 'queued', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+  };
+  idb.put('farmers', reg).then(function () {
+    S.regQueue.push(reg);
+    toast(name + ' added' + (navigator.onLine ? '' : ' — will sync when online'));
+    if (done) done(reg);
+    syncAll();
+  });
+}
 function rerenderVisit() {
   var v = $('#view');
   if (v) { v.innerHTML = viewVisit(location.hash.replace(/^#/, '').split('?')[0]); bindVisit(); }
@@ -698,6 +898,17 @@ function rerenderVisit() {
 function captureFormText() {
   if (!$('#fNotes')) return;
   form.notes = $('#fNotes').value;
+  form.issue = $('#fIssue') ? $('#fIssue').value : form.issue;
+  form.ai_administered = $('#fAI') ? $('#fAI').checked : form.ai_administered;
+  form.farmer_id = $('#fFarmer') ? ($('#fFarmer').value || null) : form.farmer_id;
+  var soilOn = $('#fSoil') ? $('#fSoil').checked : true;
+  form._soil = $('#fSoil') ? soilOn : form._soil;
+  if (!soilOn) {
+    form.readings = [];
+    form.sample_collected = false;
+    form.sample_id = '';
+    return;
+  }
   form.sample_id = $('#fSampleId') ? $('#fSampleId').value : form.sample_id;
   form.readings = [];
   $all('.readings-table input').forEach(function (inp) {
@@ -723,7 +934,7 @@ function saveVisit(queueIt) {
   form.state = queueIt ? 'queued' : 'draft';
   form.error = null;
   var rec = JSON.parse(JSON.stringify(form));
-  idb.put(rec).then(function () {
+  idb.put('visits', rec).then(function () {
     form._done = true;
     return loadQueue();
   }).then(function () {
@@ -765,11 +976,16 @@ function viewQueue() {
     html += '<div class="card mt12">' + S.queue.map(function (r) {
       var s = siteById(r.site_id);
       var f = (farms().find(function (x) { return x.id === r.farm_id; }) || {}).label;
+      var fm = r.farmer_id ? (farmers().find(function (x) { return x.id === r.farmer_id; }) || {}).name : null;
       var readingsN = (r.readings || []).length;
       return '<div class="queue-item">' +
         '<div class="row spread"><b>' + esc(s ? s.sub_area : 'Site ' + r.site_id) + (f ? ' · ' + esc(f) : '') + '</b>' +
         '<span class="chip state-' + r.state + '">' + r.state + '</span></div>' +
-        '<div class="muted small">' + fmtWhen(r.submitted_at || r.updated_at) + ' · ' + readingsN + ' readings' +
+        '<div class="muted small">' + fmtWhen(r.submitted_at || r.updated_at) +
+        (fm ? ' · ' + esc(fm) : '') +
+        (r.ai_administered ? ' · AI ✓' : '') +
+        (r.issue ? ' · issue noted' : '') +
+        ' · ' + readingsN + ' readings' +
         (r.sample_collected ? ' · sample ' + esc(r.sample_id || '') : '') +
         ((r.photos || []).length ? ' · ' + r.photos.length + ' photo(s)' : '') + '</div>' +
         (r.error ? '<div class="small" style="color:var(--danger);margin-top:3px">' + esc(r.error) + '</div>' : '') +
@@ -793,13 +1009,13 @@ function bindQueue() {
     if (qid) {
       var rec = S.queue.find(function (r) { return r.id === qid; });
       if (rec) { rec.state = 'queued'; rec.updated_at = new Date().toISOString();
-        idb.put(rec).then(loadQueue).then(function () { render(); syncAll(); }); }
+        idb.put('visits', rec).then(loadQueue).then(function () { render(); syncAll(); }); }
     } else if (did) {
       var rec2 = S.queue.find(function (r) { return r.id === did; });
       var warn = rec2 && rec2.state !== 'synced'
         ? 'Delete this visit? It has NOT been synced and will be lost.'
         : 'Remove the local copy? The synced data stays on the server.';
-      if (confirm(warn)) idb.del(did).then(loadQueue).then(render);
+      if (confirm(warn)) idb.del('visits', did).then(loadQueue).then(render);
     }
   });
 }
@@ -830,10 +1046,14 @@ function renderDash(prog, act) {
   var el = $('#dashBody'); if (!el) return;
   var t = prog.totals, g = prog.targets;
   var html = '<div class="stat-grid">' +
-    stat(t.farms_complete + '/' + g.validation_farms, 'Farms complete') +
     stat(t.visits, 'Total visits') +
+    stat((t.farmers_engaged || 0) + '/' + (t.farmers || 0), 'Farmers engaged') +
+    stat(t.ai_visits || 0, 'AI administered') +
+    stat(t.issues || 0, 'Issues logged') +
+    stat(t.farms_complete + '/' + g.validation_farms, 'Farms complete') +
     stat(t.readings, 'Readings') +
     stat(t.samples, 'Lab samples') +
+    stat(t.farmers || 0, 'Farmers listed') +
     '</div>';
 
   // validation site progress
@@ -853,7 +1073,9 @@ function renderDash(prog, act) {
       (m.role === 'manager' ? ' <span class="chip blue">manager</span>' : '') +
       (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
       '<span class="site-meta">' + esc(m.username || m.phone || '') +
-      (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits · last: ' + fmtWhen(m.last_synced_at) +
+      (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits' +
+      (Number(m.farmers_registered) ? ' · +' + m.farmers_registered + ' farmers' : '') +
+      ' · last: ' + fmtWhen(m.last_synced_at) +
       (m.last_gps ? ' @ ' + esc(m.last_gps.site) : '') + '</span></span>' +
       '<span class="row" style="gap:6px">' +
       '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
@@ -876,12 +1098,15 @@ function renderDash(prog, act) {
       var gps = v.gps_lat == null ? '<span class="flag">no GPS</span>'
         : (v.gps_flag ? '<span class="flag">' + fmtDist(v.distance_from_site_m) + ' away ⚠</span>'
                       : fmtDist(v.distance_from_site_m));
-      var data = (v.readings_count || 0) + ' readings' +
+      var data = (v.ai_administered ? '<span class="chip" style="margin-right:4px">AI ✓</span>' : '') +
+        (v.readings_count ? v.readings_count + ' readings' : 'no soil data') +
         (Number(v.out_of_range) ? ' · <span class="flag">' + v.out_of_range + ' out-of-range</span>' : '') +
         (v.sample_collected ? '<br>sample ' + esc(v.sample_id || '✓') : '') +
-        (Number(v.photos) ? ' · ' + v.photos + '📷' : '');
+        (Number(v.photos) ? ' · ' + v.photos + '📷' : '') +
+        (v.issue ? '<br><span class="flag">issue:</span> ' + esc(v.issue) : '');
       return '<tr><td>' + fmtWhen(v.synced_at) + '</td>' +
-        '<td><b>' + esc(v.supervisor) + '</b><br>' + esc(v.site) + (v.farm ? ' · ' + esc(v.farm) : '') + '</td>' +
+        '<td><b>' + esc(v.supervisor) + '</b><br>' + esc(v.site) + (v.farm ? ' · ' + esc(v.farm) : '') +
+        (v.farmer ? '<br>👤 ' + esc(v.farmer) : '') + '</td>' +
         '<td>' + gps + '</td><td>' + data + '</td></tr>';
     }).join('') + '</tbody></table></div>' +
     ((act.visits || []).length === 0 ? '<p class="muted small mt8">No synced visits yet.</p>' : '') +
