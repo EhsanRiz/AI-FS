@@ -282,8 +282,13 @@ function syncAll(manual) {
   }).catch(function () {}).then(function () {
     S.syncing = false;
     updateNetDot();
-    if (location.hash === '#/queue' || location.hash === '' || location.hash === '#/home') render();
-    else renderNavBadge();
+    var r = (location.hash || '#/home').replace(/^#/, '');
+    var v = $('#view');
+    if (r === '/queue' && v) { v.innerHTML = viewQueue(); bindQueue(); }
+    else if ((r === '/home' || r === '') && v && S.me && S.me.role !== 'manager') {
+      v.innerHTML = viewSmartHome(); bindSmartHome();
+    }
+    renderNavBadge();
   });
 }
 function refreshBoot() {
@@ -331,13 +336,17 @@ function render() {
   else if (route === '/farmers') { view.innerHTML = viewFarmers(); bindFarmers(); }
   else if (route === '/map') { view.innerHTML = viewMap(); bindMap(); }
   else if (route === '/queue') { view.innerHTML = viewQueue(); bindQueue(); }
-  else if (route === '/dash') { view.innerHTML = viewDash(); bindDash(); }
-  else { view.innerHTML = viewHome(); bindHome(); }
+  else if (route === '/sites') { view.innerHTML = viewSites(); bindSites(); }
+  else if (route === '/dash') { location.hash = '#/home'; return; }
+  else if (S.me && S.me.role === 'manager') { view.innerHTML = viewDash(); bindDash(); }
+  else { view.innerHTML = viewSmartHome(); bindSmartHome(); }
   updateNetDot();
+  bindDrawer();
 }
 
 function headerHTML() {
   return '<header class="app-header">' +
+    '<button class="burger" id="btnBurger" aria-label="Menu"><span></span><span></span><span></span></button>' +
     '<div><div class="title">FS Field Monitoring</div>' +
     '<div class="sub">' + esc(S.me ? S.me.name : '') + (S.me && S.me.role === 'manager' ? ' · Manager' : '') + '</div></div>' +
     '<div class="header-actions">' +
@@ -354,26 +363,48 @@ var ICONS = {
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.9 5 4.8"/></svg>'
 };
 
-function navHTML(route) {
-  var pend = pendingCount();
-  var isMgr = S.me && S.me.role === 'manager';
-  var items = [
-    { href: '#/home', icon: 'home', label: 'Sites', active: route === '/home' || route.indexOf('/visit') === 0 },
+function navItems(route) {
+  return [
+    { href: '#/home', icon: 'dash', label: 'Home', active: route === '/home' || route === '' },
+    { href: '#/sites', icon: 'home', label: 'Sites', active: route === '/sites' || route.indexOf('/visit') === 0 },
     { href: '#/farmers', icon: 'users', label: 'Farmers', active: route === '/farmers' },
     { href: '#/map', icon: 'map', label: 'Map', active: route === '/map' },
-    { href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pend }
+    { href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pendingCount() }
   ];
-  if (isMgr) items.push({ href: '#/dash', icon: 'dash', label: 'Dashboard', active: route === '/dash' });
-  return '<nav class="bottom-nav">' + items.map(function (i) {
+}
+function navLinksHTML(route) {
+  return navItems(route).map(function (i) {
     return '<a href="' + i.href + '" class="' + (i.active ? 'active' : '') + '">' + ICONS[i.icon] +
       '<span>' + i.label + '</span>' +
       (i.badge ? '<span class="nav-badge">' + i.badge + '</span>' : '') + '</a>';
-  }).join('') + '</nav>';
+  }).join('');
+}
+function navHTML(route) {
+  return '<nav class="bottom-nav">' + navLinksHTML(route) + '</nav>' +
+    '<div class="drawer-overlay" id="drawerOverlay"></div>' +
+    '<aside class="drawer" id="drawer">' +
+    '<img src="assets/logo-4dcs.png?v=1" alt="4D Climate Solutions" style="width:170px;margin:4px 0 14px">' +
+    '<nav class="drawer-nav">' + navLinksHTML(route) + '</nav>' +
+    '<div class="drawer-foot">' +
+    '<button class="btn btn-secondary btn-block btn-sm" id="drawerSync">Sync now</button>' +
+    '<button class="btn btn-outline btn-block btn-sm mt8" id="drawerLogout">Sign out</button>' +
+    copyrightHTML() + '</div></aside>';
+}
+function bindDrawer() {
+  var burger = $('#btnBurger'), drawer = $('#drawer'), ov = $('#drawerOverlay');
+  if (!burger || !drawer) return;
+  function close() { drawer.classList.remove('open'); ov.classList.remove('open'); }
+  burger.onclick = function () { drawer.classList.toggle('open'); ov.classList.toggle('open'); };
+  ov.onclick = close;
+  drawer.onclick = function (e) { if (e.target.closest('a')) close(); };
+  $('#drawerSync').onclick = function () { close(); syncAll(true); };
+  $('#drawerLogout').onclick = function () { close(); confirmLogout(); };
 }
 function renderNavBadge() {
   var nav = $('.bottom-nav'); if (!nav) return;
   var route = (location.hash || '#/home').replace(/^#/, '');
-  nav.outerHTML = navHTML(route);
+  nav.innerHTML = navLinksHTML(route);
+  var dn = $('.drawer-nav'); if (dn) dn.innerHTML = navLinksHTML(route);
 }
 function updateNetDot() {
   var d = $('#netDot'); if (d) d.className = 'net-dot' + (navigator.onLine ? '' : ' off');
@@ -434,7 +465,7 @@ function siteProgressMap() {
   }
   return m;
 }
-function viewHome() {
+function viewSites() {
   var prog = (S.boot && S.boot.progress) || null;
   var totals = prog ? prog.totals : null;
   var targets = prog ? prog.targets : null;
@@ -498,11 +529,90 @@ function siteRow(s, p, validation) {
     (myAssigned().indexOf(s.id) !== -1 ? ' <span class="chip blue">your station</span>' : '') + '</span>' +
     '<span class="site-meta">' + meta + '</span></span>' + right + (tappable ? '</a>' : '</span>');
 }
-function bindHome() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+function bindSites() {
+  $('#btnLogout').onclick = confirmLogout;
   if (navigator.onLine) refreshBoot().then(function () {
-    if ((location.hash || '#/home') === '#/home' || location.hash === '') {
-      var v = $('#view'); if (v) { v.innerHTML = viewHome(); }
+    if (location.hash === '#/sites') {
+      var v = $('#view'); if (v) { v.innerHTML = viewSites(); }
+    }
+  });
+}
+
+/* ------------------------------------------------------- smart home (FS) -- */
+function daysSince(iso) {
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function viewSmartHome() {
+  var prog = (S.boot && S.boot.progress) || {};
+  var mySites = myAssigned().map(siteById).filter(Boolean);
+  var me = ((prog.supervisors || []).find(function (x) { return x.id === (S.me && S.me.id); })) || {};
+  var siteRows = (prog.sites || []).filter(function (ps) {
+    return myAssigned().indexOf(ps.site_id) !== -1;
+  });
+  var pend = pendingCount();
+  var stationName = mySites.map(function (x) { return x.sub_area; }).join(' + ');
+
+  var html = '<div class="hero card">' +
+    '<div class="muted small">' + new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }) + '</div>' +
+    '<h2 style="font-size:19px;margin:2px 0 2px">Welcome back, ' + esc((S.me.name || '').split(/\s+/)[0]) + '</h2>' +
+    (stationName ? '<div class="muted small">Your station: <b>' + esc(stationName) + '</b></div>' : '') +
+    '</div>';
+
+  // nudges
+  var nudges = [];
+  if (pend) nudges.push(['warn', pend + ' visit' + (pend === 1 ? '' : 's') + ' on this phone waiting to sync', '#/queue']);
+  var engaged = 0, totalFarmers = 0, valDone = 0, valTarget = 0, valSite = null;
+  siteRows.forEach(function (ps) {
+    engaged += Number(ps.farmers_engaged || 0);
+    totalFarmers += Number(ps.farmers_total || 0);
+    if (ps.is_validation_site) { valDone += Number(ps.readings_done || 0); valTarget += Number(ps.readings_target || 0); valSite = ps.sub_area; }
+  });
+  if (totalFarmers && engaged < totalFarmers) {
+    nudges.push(['info', (totalFarmers - engaged) + ' of your ' + totalFarmers + ' farmers not yet visited', '#/farmers']);
+  }
+  var d = daysSince(me.last_synced_at);
+  if (me.last_synced_at == null) nudges.push(['info', 'No synced visits yet — start with your first field visit', '#/visit']);
+  else if (d >= 4) nudges.push(['warn', 'No synced visits in ' + d + ' days', '#/visit']);
+  if (valTarget && valDone < valTarget) {
+    nudges.push(['info', 'Soil validation at ' + esc(valSite) + ': ' + Math.round(valDone * 100 / valTarget) + '% of readings done', '#/sites']);
+  }
+  if (nudges.length) {
+    html += nudges.map(function (n) {
+      return '<a class="nudge ' + n[0] + '" href="' + n[2] + '">' + esc(n[1]) + ' <span style="margin-left:auto">›</span></a>';
+    }).join('');
+  }
+
+  html += '<div class="stat-grid mt12">' +
+    stat(me.visits_7d != null ? me.visits_7d : '—', 'Visits this week') +
+    stat(me.visits != null ? me.visits : '—', 'Visits total') +
+    stat(totalFarmers ? engaged + '/' + totalFarmers : (me.farmers_engaged || 0), 'Farmers engaged') +
+    stat(me.ai_visits != null ? me.ai_visits : '—', 'AI administered') +
+    '</div>';
+
+  if (totalFarmers) {
+    var pct = Math.min(100, Math.round(engaged * 100 / totalFarmers));
+    html += '<div class="card mt12"><div class="row spread"><h3>Farmer engagement</h3>' +
+      '<span class="small muted">' + pct + '%</span></div>' +
+      '<div class="pbar' + (pct >= 100 ? ' full' : '') + '"><div style="width:' + pct + '%"></div></div></div>';
+  }
+
+  html += '<a class="btn btn-primary btn-block mt12" href="#/visit">+ New field visit</a>' +
+    '<div class="row mt8" style="gap:8px">' +
+    '<a class="btn btn-secondary btn-sm" style="flex:1" href="#/farmers">Farmers</a>' +
+    '<a class="btn btn-secondary btn-sm" style="flex:1" href="#/sites">Sites</a>' +
+    '<a class="btn btn-secondary btn-sm" style="flex:1" href="#/map">Map</a>' +
+    '</div>';
+
+  html += copyrightHTML();
+  return html;
+}
+function bindSmartHome() {
+  $('#btnLogout').onclick = confirmLogout;
+  if (navigator.onLine) refreshBoot().then(function () {
+    var r = (location.hash || '#/home').replace(/^#/, '');
+    if (r === '/home' || r === '') {
+      var v = $('#view'); if (v && S.me && S.me.role !== 'manager') v.innerHTML = viewSmartHome();
     }
   });
 }
@@ -577,7 +687,7 @@ function viewFarmers() {
   return html;
 }
 function bindFarmers() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#btnLogout').onclick = confirmLogout;
   $('#farmerSearch').addEventListener('input', function () {
     farmerSearch = this.value;
     var v = $('#view');
@@ -631,7 +741,7 @@ function viewMap() {
     '</div>';
 }
 function bindMap() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#btnLogout').onclick = confirmLogout;
   if (typeof L === 'undefined') {
     $('#map').innerHTML = '<div class="info-box" style="margin:12px">Map needs an internet connection the first time it loads.</div>';
     return;
@@ -856,7 +966,7 @@ function photoStripHTML() {
   return html;
 }
 function bindVisit() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#btnLogout').onclick = confirmLogout;
 
   $('#fSite').addEventListener('change', function () {
     captureFormText();
@@ -1089,9 +1199,9 @@ function viewQueue() {
   return html;
 }
 function bindQueue() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#btnLogout').onclick = confirmLogout;
   $('#btnSyncNow').addEventListener('click', function () { syncAll(true); });
-  $('#view').addEventListener('click', function (e) {
+  $('#view').onclick = function (e) {
     var qid = e.target.getAttribute('data-queue');
     var did = e.target.getAttribute('data-del');
     if (qid) {
@@ -1113,7 +1223,7 @@ function bindQueue() {
         : 'Remove the local copy? The synced data stays on the server.';
       if (confirm(warn)) idb.del('visits', did).then(loadQueue).then(render);
     }
-  });
+  };
 }
 
 /* ------------------------------------------------------------- dashboard -- */
@@ -1122,7 +1232,7 @@ function viewDash() {
     (navigator.onLine ? '' : ' (offline — showing nothing new)') + '</p></div></div>';
 }
 function bindDash() {
-  $('#btnLogout').addEventListener('click', confirmLogout);
+  $('#btnLogout').onclick = confirmLogout;
   if (!navigator.onLine) {
     $('#dashBody').innerHTML = '<div class="info-box">The dashboard needs a connection.</div>';
     return;
@@ -1141,7 +1251,29 @@ function bindDash() {
 function renderDash(prog, act) {
   var el = $('#dashBody'); if (!el) return;
   var t = prog.totals, g = prog.targets;
-  var html = '<div class="stat-grid">' +
+  var html = '';
+
+  // intelligence strip: who/what needs attention
+  var attention = [];
+  (prog.supervisors || []).forEach(function (sp) {
+    if (sp.role === 'manager' || sp.active === false) return;
+    var d = daysSince(sp.last_synced_at);
+    if (sp.last_synced_at == null) attention.push(['warn', esc(sp.name) + ' has not synced any visits yet']);
+    else if (d >= 7) attention.push(['warn', esc(sp.name) + ' inactive for ' + d + ' days']);
+  });
+  var flagged = (act.visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); }).length;
+  if (flagged) attention.push(['info', flagged + ' recent visit(s) with data-quality flags (GPS or out-of-range)']);
+  var openIssues = (act.visits || []).filter(function (v) { return v.issue; }).slice(0, 3);
+  openIssues.forEach(function (v) {
+    attention.push(['info', 'Issue at ' + esc(v.site) + ' (' + esc(v.supervisor) + '): ' + esc(v.issue)]);
+  });
+  if (attention.length) {
+    html += '<div class="card"><h2>Needs attention</h2>' + attention.slice(0, 6).map(function (a) {
+      return '<div class="nudge ' + a[0] + '" style="margin-bottom:6px">' + a[1] + '</div>';
+    }).join('') + '</div>';
+  }
+
+  html += '<div class="stat-grid">' +
     stat(t.visits, 'Total visits') +
     stat((t.farmers_engaged || 0) + '/' + (t.farmers || 0), 'Farmers engaged') +
     stat(t.ai_visits || 0, 'AI administered') +

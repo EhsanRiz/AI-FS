@@ -800,3 +800,10 @@ end $$;
 --   * fs_submit_visit rejects submissions missing GPS coordinates, an explicit
 --     ai_administered answer (true/false), or at least one photo.
 -- =============================================================================
+
+-- =============================================================================
+-- v6 (2026-08): fs_progress per-supervisor stats extended for the smart home —
+-- adds username, role, visits_7d, farmers_engaged, ai_visits, issues,
+-- farmers_registered per supervisor, and visits_7d to totals.
+-- Applied as migration fs_progress_per_supervisor_intelligence.
+-- =============================================================================

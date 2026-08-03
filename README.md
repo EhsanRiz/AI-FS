@@ -19,7 +19,8 @@ as a PWA from the browser menu on phones.
 ## Architecture
 
 - **Frontend:** `index.html` + `app.js` (vanilla JS, hash routing) + `styles.css` (4DCS palette,
-  Poppins/Nunito Sans) + Leaflet 1.9.4 (pinned CDN) for the map.
+  Poppins/Nunito Sans) + Leaflet 1.9.4 (pinned CDN) for the map. Responsive navigation: bottom
+  tabs + burger drawer on phones, persistent left sidebar on ≥900 px screens.
 - **Offline:** `sw.js` precaches the app shell (opens with no signal in the field); visits are
   stored in **IndexedDB** with states `draft → queued → synced/failed` and sync automatically
   when connectivity returns (online event / app focus / manual "Sync now").
@@ -44,6 +45,8 @@ as a PWA from the browser menu on phones.
 
 | Screen | Who | What |
 |---|---|---|
+| Home | FS | Intelligent opening screen: greeting + station, nudges (unsynced visits, farmers not yet engaged, inactivity, soil-validation progress), personal stats (visits this week/total, farmers engaged, AI administered), engagement bar, quick actions |
+| Home | manager | The monitoring dashboard is the landing view, opening with a "Needs attention" strip (inactive FS, data-quality flags, recent issues) above the totals/progress/team/activity sections |
 | Sites | all | Validation-site targets + progress, all 18 sub-areas, start a visit |
 | Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register new farmer or edit farmer details (both work offline), jump to a visit |
 | Map | all | Leaflet map, district colours, validation sites ringed gold |
