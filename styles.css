@@ -270,3 +270,13 @@ main#view {
 @media (min-width: 700px) {
   .stat-grid { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ---- offline banner / branding (v2) ---- */
+.offline-bar {
+  background: #fdf3e0; color: #92600a; border-bottom: 1px solid #f3dfb6;
+  padding: 8px 14px; font-size: 13px; font-weight: 700; text-align: center;
+}
+.copyright {
+  text-align: center; color: #a8a29e; font-size: 11.5px; margin: 18px 0 6px;
+}
+.login-logo-img { display: block; width: 108px; margin: 0 auto 12px; }

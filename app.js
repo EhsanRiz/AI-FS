@@ -42,6 +42,24 @@ function readJSON(k) {
   try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; }
 }
 function sites() { return (S.boot && S.boot.sites) || (window.FSM_SEED || {}).sites || []; }
+function myAssigned() { return (S.me && S.me.assigned_site_ids) || []; }
+function defaultSiteId() { var a = myAssigned(); return a.length === 1 ? a[0] : null; }
+// Supervisors with an assigned station may only capture there (also enforced
+// server-side in fs_submit_visit); managers and unassigned accounts see all.
+function visitableSites() {
+  var a = myAssigned();
+  if (S.me && S.me.role === 'supervisor' && a.length) {
+    return sites().filter(function (s) { return a.indexOf(s.id) !== -1; });
+  }
+  return sites();
+}
+function canVisit(siteId) {
+  return visitableSites().some(function (s) { return s.id === Number(siteId); });
+}
+function copyrightHTML() {
+  return '<p class="copyright">© ' + new Date().getFullYear() +
+    ' 4D Climate Solutions · creative · innovative · green · sustainable</p>';
+}
 function farms() { return (S.boot && S.boot.farms) || (window.FSM_SEED || {}).farms || []; }
 function siteById(id) { return sites().find(function (s) { return s.id === Number(id); }); }
 function farmsOf(siteId) { return farms().filter(function (f) { return f.site_id === Number(siteId); }); }
@@ -255,6 +273,8 @@ function render() {
 
   root.innerHTML =
     headerHTML() +
+    '<div id="offBar" class="offline-bar"' + (navigator.onLine ? ' hidden' : '') + '>' +
+    'You are offline — visits are saved on this phone and will sync automatically when you are back online.</div>' +
     '<main id="view"></main>' +
     navHTML(route) +
     '<div id="toast"></div>';
@@ -307,30 +327,34 @@ function renderNavBadge() {
 }
 function updateNetDot() {
   var d = $('#netDot'); if (d) d.className = 'net-dot' + (navigator.onLine ? '' : ' off');
+  var b = $('#offBar'); if (b) b.hidden = navigator.onLine;
 }
 
 /* ----------------------------------------------------------------- login -- */
 function viewLogin() {
   return '<main id="view"><div class="login-wrap">' +
-    '<div class="login-logo">4DCS</div>' +
+    '<img class="login-logo-img" src="assets/logo-mark.svg?v=1" alt="4D Climate Solutions">' +
     '<h1>FS Field Monitoring</h1>' +
     '<p class="tagline muted">Soil data collection — AI-Powered Extension for Agricultural Resilience</p>' +
     '<div class="card">' +
     '<div id="loginError"></div>' +
-    '<div class="field"><label>Phone number</label>' +
-    '<input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 5885 1234"></div>' +
+    '<div class="field"><label>First name (or phone number)</label>' +
+    '<input id="phone" type="text" autocomplete="username" autocapitalize="none" placeholder="e.g. molapo"></div>' +
     '<div class="field"><label>PIN</label>' +
     '<input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Your PIN" maxlength="8"></div>' +
     '<button class="btn btn-primary btn-block" id="btnLogin">Sign in</button>' +
     '<p class="muted small mt12">No account? Ask your programme manager to add you.</p>' +
-    '</div></div><div id="toast"></div></main>';
+    '</div>' +
+    '<p class="muted small" style="text-align:center">Works offline in the field — captured visits sync automatically when you are back online.</p>' +
+    copyrightHTML() +
+    '</div><div id="toast"></div></main>';
 }
 function bindLogin() {
   var busy = false;
   function go() {
     if (busy) return;
     var phone = $('#phone').value.trim(), pin = $('#pin').value.trim();
-    if (!phone || !pin) { $('#loginError').innerHTML = '<div class="error-box">Enter your phone number and PIN.</div>'; return; }
+    if (!phone || !pin) { $('#loginError').innerHTML = '<div class="error-box">Enter your name and PIN.</div>'; return; }
     busy = true; $('#btnLogin').disabled = true; $('#btnLogin').textContent = 'Signing in…';
     rpc('fs_login', { p_phone: phone, p_pin: pin }).then(function (res) {
       S.token = res.token; S.me = res.supervisor;
@@ -365,8 +389,12 @@ function viewHome() {
   var totals = prog ? prog.totals : null;
   var targets = prog ? prog.targets : null;
   var pm = siteProgressMap();
-  var vSites = sites().filter(function (s) { return s.is_validation_site; });
-  var oSites = sites().filter(function (s) { return !s.is_validation_site; });
+  var mine = myAssigned();
+  function bySort(a, b) {
+    return (mine.indexOf(b.id) !== -1 ? 1 : 0) - (mine.indexOf(a.id) !== -1 ? 1 : 0) || a.id - b.id;
+  }
+  var vSites = sites().filter(function (s) { return s.is_validation_site; }).sort(bySort);
+  var oSites = sites().filter(function (s) { return !s.is_validation_site; }).sort(bySort);
 
   var html = '<a class="btn btn-primary btn-block" href="#/visit">+ New field visit</a>';
 
@@ -389,6 +417,7 @@ function viewHome() {
   html += '<div class="card"><h2>All sub-areas</h2>';
   html += oSites.map(function (s) { return siteRow(s, pm[s.id], false); }).join('');
   html += '</div>';
+  html += copyrightHTML();
   return html;
 }
 function stat(num, label) {
@@ -408,12 +437,16 @@ function siteRow(s, p, validation) {
   } else if (p && Number(p.visits)) {
     right = '<span class="chip grey">' + p.visits + ' visit' + (Number(p.visits) === 1 ? '' : 's') + '</span>';
   }
-  return '<a class="site-item" href="#/visit?site=' + s.id + '">' +
+  var tappable = canVisit(s.id);
+  return (tappable
+      ? '<a class="site-item" href="#/visit?site=' + s.id + '">'
+      : '<span class="site-item" style="opacity:.75">') +
     '<span class="site-dot" style="background:' + color + '"></span>' +
     '<span class="site-main"><span class="site-name">' + esc(s.sub_area) +
     (s.rc !== s.sub_area ? ' <span class="muted small">(' + esc(s.rc) + ' RC)</span>' : '') +
-    (validation ? ' <span class="chip gold">validation</span>' : '') + '</span>' +
-    '<span class="site-meta">' + meta + '</span></span>' + right + '</a>';
+    (validation ? ' <span class="chip gold">validation</span>' : '') +
+    (myAssigned().indexOf(s.id) !== -1 ? ' <span class="chip blue">your station</span>' : '') + '</span>' +
+    '<span class="site-meta">' + meta + '</span></span>' + right + (tappable ? '</a>' : '</span>');
 }
 function bindHome() {
   $('#btnLogout').addEventListener('click', confirmLogout);
@@ -468,7 +501,7 @@ function bindMap() {
       esc(s.district) + ' · ' + esc(s.zone) + ' · ' + s.farmers + ' farmers' +
       (s.is_validation_site ? '<br><b>Validation site</b> — ' + (p ? p.farms_complete : 0) + '/3 farms complete' : '') +
       (p && Number(p.visits) ? '<br>' + p.visits + ' visit(s), last ' + fmtWhen(p.last_visit_at) : '') +
-      '<br><a href="#/visit?site=' + s.id + '">Start visit here</a>');
+      (canVisit(s.id) ? '<br><a href="#/visit?site=' + s.id + '">Start visit here</a>' : ''));
   });
   S.map = map;
 }
@@ -505,7 +538,9 @@ function viewVisit(route) {
     var rec = S.queue.find(function (r) { return r.id === q.edit; });
     form = rec ? JSON.parse(JSON.stringify(rec)) : blankVisit(null);
   } else if (!form || form._done || q.site) {
-    form = blankVisit(q.site || null);
+    var pre = q.site ? Number(q.site) : defaultSiteId();
+    if (pre && !canVisit(pre)) pre = defaultSiteId();
+    form = blankVisit(pre);
   }
   var site = form.site_id ? siteById(form.site_id) : null;
   var fList = form.site_id ? farmsOf(form.site_id) : [];
@@ -515,7 +550,7 @@ function viewVisit(route) {
   // site select
   html += '<div class="field"><label>Site (sub-area)</label><select id="fSite">' +
     '<option value="">Choose a site…</option>' +
-    sites().map(function (s) {
+    visitableSites().map(function (s) {
       return '<option value="' + s.id + '"' + (form.site_id === s.id ? ' selected' : '') + '>' +
         esc(s.sub_area) + (s.is_validation_site ? ' ★' : '') + ' — ' + esc(s.district) + '</option>';
     }).join('') + '</select></div>';
@@ -817,7 +852,8 @@ function renderDash(prog, act) {
       '<span class="site-main"><span class="site-name">' + esc(m.name) +
       (m.role === 'manager' ? ' <span class="chip blue">manager</span>' : '') +
       (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
-      '<span class="site-meta">' + esc(m.phone) + ' · ' + m.visits + ' visits · last: ' + fmtWhen(m.last_synced_at) +
+      '<span class="site-meta">' + esc(m.username || m.phone || '') +
+      (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits · last: ' + fmtWhen(m.last_synced_at) +
       (m.last_gps ? ' @ ' + esc(m.last_gps.site) : '') + '</span></span>' +
       '<span class="row" style="gap:6px">' +
       '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
@@ -826,8 +862,9 @@ function renderDash(prog, act) {
   }).join('') +
     '<h3 class="mt12">Add team member</h3>' +
     '<div class="field"><input id="nName" placeholder="Full name"></div>' +
-    '<div class="row"><div class="field" style="flex:1"><input id="nPhone" type="tel" placeholder="Phone"></div>' +
+    '<div class="row"><div class="field" style="flex:1"><input id="nUser" autocapitalize="none" placeholder="Username (first name)"></div>' +
     '<div class="field" style="flex:1"><input id="nPin" type="text" inputmode="numeric" placeholder="PIN (4-8 digits)"></div></div>' +
+    '<div class="field"><input id="nPhone" type="tel" placeholder="Phone (optional)"></div>' +
     '<div class="field"><select id="nRole"><option value="supervisor">Field Supervisor</option><option value="manager">Manager</option></select></div>' +
     '<button class="btn btn-primary btn-block" id="btnAddMember">Add member</button>' +
     '</div>';
@@ -848,15 +885,15 @@ function renderDash(prog, act) {
         '<td>' + gps + '</td><td>' + data + '</td></tr>';
     }).join('') + '</tbody></table></div>' +
     ((act.visits || []).length === 0 ? '<p class="muted small mt8">No synced visits yet.</p>' : '') +
-    '</div>';
+    '</div>' + copyrightHTML();
 
   el.innerHTML = html;
 
   $('#btnAddMember').addEventListener('click', function () {
     var name = $('#nName').value.trim(), phone = $('#nPhone').value.trim(), pin = $('#nPin').value.trim();
-    var role = $('#nRole').value;
-    if (!name || !phone || !pin) { toast('Fill in name, phone and PIN'); return; }
-    rpc('fs_add_supervisor', { p_token: S.token, p_name: name, p_phone: phone, p_pin: pin, p_role: role })
+    var user = $('#nUser').value.trim(), role = $('#nRole').value;
+    if (!name || !pin || (!user && !phone)) { toast('Fill in name, PIN and a username (or phone)'); return; }
+    rpc('fs_add_supervisor', { p_token: S.token, p_name: name, p_phone: phone, p_pin: pin, p_role: role, p_username: user })
       .then(function () { toast(name + ' added'); bindDash(); })
       .catch(function (err) { if (!handleAuthError(err)) toast(err.message); });
   });
@@ -888,7 +925,11 @@ function fmtDist(m) {
 
 /* ------------------------------------------------------------------ boot -- */
 window.addEventListener('hashchange', render);
-window.addEventListener('online', function () { updateNetDot(); syncAll(); });
+window.addEventListener('online', function () {
+  updateNetDot();
+  if (pendingCount()) toast('Back online — syncing your visits…');
+  syncAll();
+});
 window.addEventListener('offline', updateNetDot);
 document.addEventListener('visibilitychange', function () {
   if (!document.hidden && S.token) syncAll();

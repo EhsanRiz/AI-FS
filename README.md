@@ -27,9 +27,15 @@ as a PWA from the browser menu on phones.
   access path is the `SECURITY DEFINER` RPCs in `supabase/schema.sql`
   (`fs_login`, `fs_bootstrap`, `fs_submit_visit`, `fs_progress`, `fs_activity`,
   `fs_add_supervisor`, `fs_set_supervisor`).
-- **Auth:** phone + PIN (low-friction for field use). `fs_login` returns a 60-day bearer token
-  (sha256-hashed at rest; bcrypt PINs; 8 failed attempts → 15-min lockout).
-  Roles: `supervisor` (capture) and `manager` (dashboard, activity feed, team management).
+- **Auth:** first-name username (or phone) + PIN — one login field takes either. `fs_login`
+  returns a 60-day bearer token (sha256-hashed at rest; bcrypt PINs; 8 failed attempts →
+  15-min lockout). Roles: `supervisor` (capture) and `manager` (dashboard, activity feed,
+  team management). The 17 Field Officers are seeded with usernames = first names (the two
+  Rorisangs are `rorisangt`/`rorisangs`); phones can be added later.
+- **Station lock:** each Field Officer is assigned their resource centre
+  (`fs_supervisors.assigned_site_ids`; the Peka officer covers Peka + Tabola). The app only
+  offers their own station for capture, and `fs_submit_visit` rejects any other site
+  server-side. Managers are unrestricted.
 - **MCP:** `.mcp.json` configures the Supabase MCP server for this project — run `claude /mcp`
   once in a regular terminal to authenticate.
 
