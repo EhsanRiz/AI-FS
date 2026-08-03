@@ -222,8 +222,8 @@ main#view {
 }
 .photo-add {
   width: 84px; height: 84px; border: 1.5px dashed var(--earth); border-radius: 10px;
-  display: flex; align-items: center; justify-content: center; color: var(--earth);
-  font-size: 26px; background: #fff;
+  display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center;
+  color: var(--earth); font-size: 24px; background: #fff; cursor: pointer;
 }
 
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; }

@@ -1117,7 +1117,7 @@ function viewVisit(route) {
   html += '<div class="card"><h2>Photos & notes</h2>' +
     '<p class="muted small">At least one photo is required. Notes are optional.</p>' +
     '<div class="photo-strip" id="photoStrip">' + photoStripHTML() + '</div>' +
-    '<input type="file" id="fPhoto" accept="image/*" capture="environment" style="display:none">' +
+    '<input type="file" id="fPhoto" accept="image/*" style="display:none">' +
     '<div class="field mt12"><label>Notes (optional)</label>' +
     '<textarea id="fNotes" placeholder="Field conditions, issues…">' + esc(form.notes) + '</textarea></div>' +
     '</div>';
@@ -1173,7 +1173,7 @@ function photoStripHTML() {
     return '<span class="photo-thumb"><img src="data:' + p.mime + ';base64,' + p.data_base64 + '" alt="photo">' +
       '<button type="button" data-rmphoto="' + i + '">×</button></span>';
   }).join('');
-  if ((form.photos || []).length < MAX_PHOTOS) html += '<button type="button" class="photo-add" id="btnAddPhoto">+</button>';
+  if ((form.photos || []).length < MAX_PHOTOS) html += '<label for="fPhoto" class="photo-add" role="button" id="btnAddPhoto">📷<span style="font-size:11px;font-weight:700">Add</span></label>';
   return html;
 }
 function bindVisit() {
@@ -1254,7 +1254,8 @@ function bindVisit() {
   // onclick property (not addEventListener): rerenderVisit keeps the same #view
   // element, so a listener would stack up on every partial re-render.
   $('#view').onclick = function (e) {
-    if (e.target.id === 'btnAddPhoto') photoInput.click();
+    // the label opens the picker natively; this is only a backstop
+    if (e.target.closest && e.target.closest('#btnAddPhoto')) { try { photoInput.click(); } catch (err) {} }
     var rm = e.target.getAttribute('data-rmphoto');
     if (rm != null) {
       form.photos.splice(Number(rm), 1);
