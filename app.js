@@ -550,8 +550,8 @@ function statModal(key) {
   var pend = pendingCount();
   var esc2 = esc;
   if (key === 'visits_week') {
-    showModal('Visits this week', '<p class="muted small">Visits synced to the server in the last 7 days.</p>' +
-      miniTable((prog.supervisors || []).filter(function (x) { return Number(x.visits_7d); })
+    showModal('Visits this week', '<p class="muted small">Field Supervisor visits synced in the last 7 days.</p>' +
+      miniTable((prog.supervisors || []).filter(function (x) { return x.role === 'supervisor' && Number(x.visits_7d); })
         .map(function (x) { return [esc2(x.name), x.visits_7d]; })) +
       (pend ? '<div class="nudge warn mt8">' + pend + ' visit(s) on this phone not yet synced</div>' : ''));
   } else if (key === 'visits_total') {
@@ -563,8 +563,8 @@ function statModal(key) {
     showModal('Farmer engagement', '<p class="muted small">A farmer counts as engaged once at least one synced visit records them.</p>' +
       miniTable(sites2.map(function (x) { return [esc2(x.sub_area), (x.farmers_engaged || 0) + ' / ' + (x.farmers_total || 0)]; })));
   } else if (key === 'ai') {
-    showModal('AI advisory administered', '<p class="muted small">Visits where the AI advisory was administered to the farmer.</p>' +
-      miniTable((prog.supervisors || []).filter(function (x) { return x.role !== 'manager'; })
+    showModal('AI advisory administered', '<p class="muted small">Visits where the AI advisory was administered to the farmer. Field Supervisors only.</p>' +
+      miniTable((prog.supervisors || []).filter(function (x) { return x.role === 'supervisor'; })
         .map(function (x) { return [esc2(x.name), (x.ai_visits || 0) + ' of ' + (x.visits || 0) + ' visits']; })));
   } else if (key === 'issues') {
     var list = (act && act.visits ? act.visits.filter(function (v) { return v.issue; }).slice(0, 8) : []);
@@ -1432,7 +1432,7 @@ function renderDash(prog, act) {
   // intelligence strip: who/what needs attention
   var attention = [];
   (prog.supervisors || []).forEach(function (sp) {
-    if (sp.role === 'manager' || sp.active === false) return;
+    if (sp.role !== 'supervisor' || sp.active === false) return;
     var d = daysSince(sp.last_synced_at);
     if (sp.last_synced_at == null) attention.push(['warn', esc(sp.name) + ' has not synced any visits yet']);
     else if (d >= 7) attention.push(['warn', esc(sp.name) + ' inactive for ' + d + ' days']);
@@ -1469,24 +1469,37 @@ function renderDash(prog, act) {
       '<div class="pbar' + (pct >= 100 ? ' full' : '') + '"><div style="width:' + pct + '%"></div></div></div>';
   }).join('') + '</div>';
 
-  // team
-  html += '<div class="card"><h2>Field team</h2>' + (act.team || []).map(function (m) {
-    var initials = m.name.split(/\s+/).map(function (w) { return w[0] || ''; }).join('').slice(0, 2).toUpperCase();
-    return '<div class="team-item"><span class="avatar">' + esc(initials) + '</span>' +
+  // team — Field Supervisors (performance data) separate from programme staff
+  var mgmtBtns = function (m) {
+    return canManage ? '<span class="row" style="gap:6px">' +
+      '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
+      '<button class="btn ' + (m.active ? 'btn-danger-outline' : 'btn-secondary') + ' btn-sm" data-toggle="' + m.id + '" data-active="' + m.active + '" data-name="' + esc(m.name) + '">' +
+      (m.active ? 'Off' : 'On') + '</button></span>' : '';
+  };
+  var avatarOf = function (m) {
+    return '<span class="avatar">' + esc(m.name.split(/\s+/).map(function (w) { return w[0] || ''; }).join('').slice(0, 2).toUpperCase()) + '</span>';
+  };
+  var fsRow = function (m) {
+    return '<div class="team-item">' + avatarOf(m) +
       '<span class="site-main"><span class="site-name">' + esc(m.name) +
-      (m.role === 'manager' ? ' <span class="chip blue">manager</span>' : '') +
-      (m.role === 'viewer' ? ' <span class="chip grey">viewer</span>' : '') +
       (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
       '<span class="site-meta">' + esc(m.username || m.phone || '') +
       (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits' +
       (Number(m.farmers_registered) ? ' · +' + m.farmers_registered + ' farmers' : '') +
       ' · last: ' + fmtWhen(m.last_synced_at) +
-      (m.last_gps ? ' @ ' + esc(m.last_gps.site) : '') + '</span></span>' +
-      (canManage ? '<span class="row" style="gap:6px">' +
-      '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
-      '<button class="btn ' + (m.active ? 'btn-danger-outline' : 'btn-secondary') + ' btn-sm" data-toggle="' + m.id + '" data-active="' + m.active + '" data-name="' + esc(m.name) + '">' +
-      (m.active ? 'Off' : 'On') + '</button></span>' : '') + '</div>';
-  }).join('') +
+      (m.last_gps ? ' @ ' + esc(m.last_gps.site) : '') + '</span></span>' + mgmtBtns(m) + '</div>';
+  };
+  var staffRow = function (m) {
+    return '<div class="team-item">' + avatarOf(m) +
+      '<span class="site-main"><span class="site-name">' + esc(m.name) +
+      (m.role === 'manager' ? ' <span class="chip blue">manager</span>' : ' <span class="chip grey">viewer</span>') +
+      (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
+      '<span class="site-meta">' + esc(m.username || m.phone || '') + '</span></span>' + mgmtBtns(m) + '</div>';
+  };
+  var fieldTeam = (act.team || []).filter(function (m) { return m.role === 'supervisor'; });
+  var staff = (act.team || []).filter(function (m) { return m.role !== 'supervisor'; });
+  html += '<div class="card"><h2>Field team</h2>' + fieldTeam.map(fsRow).join('') +
+    (staff.length ? '<h3 class="mt12">Programme staff</h3>' + staff.map(staffRow).join('') : '') +
     (canManage ? '<h3 class="mt12">Add team member</h3>' +
     '<div class="field"><input id="nName" placeholder="Full name"></div>' +
     '<div class="row"><div class="field" style="flex:1"><input id="nUser" autocapitalize="none" placeholder="Username (first name)"></div>' +
