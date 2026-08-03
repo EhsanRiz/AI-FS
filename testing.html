@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing Guide — FS Field Monitoring · 4D Climate Solutions</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --forest:#006838; --forest-dark:#00522c; --lime:#8DC63F; --cream:#f9f8f5;
+          --dark:#2d3436; --grey:#6b7280; --line:#e5e2da; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family:'Nunito Sans',system-ui,sans-serif; background:var(--cream); color:var(--dark);
+         font-size:16px; line-height:1.55; }
+  h1,h2,h3 { font-family:'Poppins',sans-serif; color:var(--forest-dark); }
+  .wrap { max-width:760px; margin:0 auto; padding:20px 18px 60px; }
+  .head { text-align:center; padding:26px 0 8px; }
+  .head img { width:250px; max-width:80vw; }
+  .head h1 { font-size:24px; margin-top:14px; }
+  .head p { color:var(--grey); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin-top:16px; }
+  .card h2 { font-size:18px; margin-bottom:8px; }
+  .card h3 { font-size:15px; margin:14px 0 6px; }
+  .muted { color:var(--grey); font-size:14px; }
+  ol.steps { padding-left:22px; }
+  ol.steps li { margin:8px 0; }
+  .pill { display:inline-block; background:#eef7e9; color:var(--forest-dark); border-radius:99px;
+          padding:2px 12px; font-size:12.5px; font-weight:700; margin-right:6px; }
+  .pill.blue { background:#e5f4fb; color:#076286; }
+  .pill.gold { background:#fdf3e0; color:#92600a; }
+  table { width:100%; border-collapse:collapse; font-size:14.5px; }
+  th { text-align:left; color:var(--grey); font-size:12.5px; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:8px; border-bottom:1px solid #f0eee8; vertical-align:top; }
+  .check { display:flex; gap:12px; align-items:flex-start; padding:9px 0; border-bottom:1px solid #f0eee8; cursor:pointer; }
+  .check:last-child { border-bottom:none; }
+  .check input { width:22px; height:22px; margin-top:1px; accent-color:var(--forest); flex:0 0 22px; }
+  .check span { font-size:15px; }
+  .check input:checked + span { color:var(--grey); text-decoration:line-through; }
+  .phase { display:flex; gap:12px; align-items:flex-start; margin:10px 0; }
+  .phase b.n { flex:0 0 30px; height:30px; border-radius:50%; background:var(--forest); color:#fff;
+               display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .tip { background:#eef7e9; border:1px solid #d3e8c2; color:#2d5016; border-radius:12px;
+         padding:10px 14px; font-size:14px; margin-top:10px; }
+  .warn { background:#fdf3e0; border:1px solid #f3dfb6; color:#92600a; border-radius:12px;
+          padding:10px 14px; font-size:14px; margin-top:10px; }
+  .progress { position:sticky; top:0; background:var(--forest); color:#fff; padding:9px 16px;
+              font-size:13.5px; font-weight:700; text-align:center; z-index:10; }
+  .foot { text-align:center; color:#a8a29e; font-size:12px; margin-top:28px; }
+  .btn-app { display:block; text-align:center; background:var(--forest); color:#fff; text-decoration:none;
+             font-weight:700; border-radius:12px; padding:14px; margin-top:14px; font-size:16px; }
+  @media print {
+    .progress, .btn-app { display:none; }
+    body { background:#fff; }
+    .card { border:1px solid #ccc; break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="bar">Your checklist progress: 0 ticked</div>
+<div class="wrap">
+  <div class="head">
+    <img src="assets/logo-4dcs.png" alt="4D Climate Solutions">
+    <h1>FS Field Monitoring — Testing Guide</h1>
+    <p>AI-Powered Extension for Agricultural Resilience · Lesotho</p>
+    <a class="btn-app" href="https://fs.4dcs.co.za">Open the app → fs.4dcs.co.za</a>
+  </div>
+
+  <div class="card">
+    <h2>1 · Install the app on your phone</h2>
+    <ol class="steps">
+      <li>Open <b>fs.4dcs.co.za</b> in <b>Chrome</b> (Android) or <b>Safari</b> (iPhone).</li>
+      <li>Open the browser menu (⋮ on Android, the share square on iPhone).</li>
+      <li>Choose <b>“Add to Home Screen”</b>, then <b>Add / Install</b>.</li>
+      <li>Open it from your home screen — it runs full-screen with the 4D logo.</li>
+    </ol>
+    <div class="tip">The app works <b>without signal</b> once installed — everything you capture is saved
+    on the phone and sent automatically when you have network again.</div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Sign in</h2>
+    <p>Use your <b>first name</b> and your <b>PIN</b> (sent to you privately — never share it).</p>
+    <table>
+      <tr><th>Who</th><th>Role</th><th>What you can do</th></tr>
+      <tr><td>Field Supervisors</td><td><span class="pill">Supervisor</span></td>
+          <td>Record visits, register &amp; edit farmers — at your own resource centre only</td></tr>
+      <tr><td>Mantsatsi · Barth · Masupha</td><td><span class="pill blue">Viewer</span></td>
+          <td>See everything (dashboard, activity, farmers, map) — view only</td></tr>
+      <tr><td>Ehsan</td><td><span class="pill gold">Manager</span></td>
+          <td>Everything, plus team management (add members, reset PINs)</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>3 · How the test runs</h2>
+    <div class="phase"><b class="n">1</b><div><b>Office walkthrough (1–2 days)</b><br>
+      <span class="muted">Programme staff + 2–3 Field Supervisors go through the checklists below together, phones in hand.</span></div></div>
+    <div class="phase"><b class="n">2</b><div><b>Field pilot (2–3 days)</b><br>
+      <span class="muted">The same Field Supervisors do real practice visits at their own stations — including one full day in aeroplane mode.</span></div></div>
+    <div class="phase"><b class="n">3</b><div><b>Go-live</b><br>
+      <span class="muted">After sign-off all practice data is wiped, so real monitoring starts from zero. Practise freely — nothing you enter now is permanent.</span></div></div>
+  </div>
+
+  <div class="card" data-list="fs">
+    <h2>Checklist A · Field Supervisors</h2>
+    <p class="muted">Tick as you go — this page remembers your progress on this phone.</p>
+    <label class="check"><input type="checkbox"><span>Installed the app and signed in with my first name + PIN</span></label>
+    <label class="check"><input type="checkbox"><span>Home shows <b>my</b> station, my stats and reminder cards</span></label>
+    <label class="check"><input type="checkbox"><span>Map zooms to my station with the green dashed circle and ★ marker</span></label>
+    <label class="check"><input type="checkbox"><span>Farmers tab shows only my area’s farmers; search works; tapping a farmer shows their profile and visit history</span></label>
+    <label class="check"><input type="checkbox"><span>Registered a new farmer, and edited an existing farmer (e.g. fixed a phone number)</span></label>
+    <label class="check"><input type="checkbox"><span>Recorded a visit: chose the farmer, captured GPS, answered the AI question Yes/No, added a photo — the checklist ticked and <b>Save &amp; sync turned green</b></span></label>
+    <label class="check"><input type="checkbox"><span>Tried to sync <b>without</b> a photo — the app refused and showed what was missing (saving as draft still worked)</span></label>
+    <label class="check"><input type="checkbox"><span>Turned the soil toggle on and entered readings, including one silly value (e.g. pH 99) for the manager to spot</span></label>
+    <label class="check"><input type="checkbox"><span><b>Aeroplane-mode drill:</b> captured a full visit and registered a farmer offline → both showed “queued” → back online → both synced by themselves</span></label>
+    <label class="check"><input type="checkbox"><span>Signed out and back in — my drafts were still there</span></label>
+  </div>
+
+  <div class="card" data-list="viewer">
+    <h2>Checklist B · Viewers (Mantsatsi, Barth, Masupha)</h2>
+    <label class="check"><input type="checkbox"><span>App opens straight on the monitoring dashboard with the “Needs attention” list</span></label>
+    <label class="check"><input type="checkbox"><span>Tapping any statistic tile opens an explanation pop-up; the × closes it</span></label>
+    <label class="check"><input type="checkbox"><span>Team list is visible but has <b>no</b> PIN / deactivate buttons and no “Add member” form</span></label>
+    <label class="check"><input type="checkbox"><span>I can browse Sites, all Farmers (with detail cards) and the Map — but there is <b>no</b> “New visit” button and no register/edit options anywhere</span></label>
+    <label class="check"><input type="checkbox"><span>The activity feed shows the practice visits with farmer, AI ✓/✗, issues, and GPS distance</span></label>
+  </div>
+
+  <div class="card" data-list="mgr">
+    <h2>Checklist C · Manager (Ehsan)</h2>
+    <label class="check"><input type="checkbox"><span>Everything in Checklist B, <b>plus</b> the team management buttons are present</span></label>
+    <label class="check"><input type="checkbox"><span>Added a test member, reset a PIN, deactivated and reactivated an account</span></label>
+    <label class="check"><input type="checkbox"><span>The silly soil reading and any far-from-site GPS show up flagged in the activity feed</span></label>
+    <label class="check"><input type="checkbox"><span>Changed all seed PINs (Dashboard → Field team → PIN)</span></label>
+  </div>
+
+  <div class="card">
+    <h2>4 · Found a problem?</h2>
+    <p>Send a message (WhatsApp is fine) with:</p>
+    <ol class="steps">
+      <li><b>Who</b> you are and your <b>phone model</b></li>
+      <li><b>Which screen</b> you were on</li>
+      <li><b>What happened</b> and <b>what you expected</b></li>
+      <li>A <b>screenshot</b> if possible</li>
+    </ol>
+    <div class="warn">Remember: everything entered during testing is practice data and will be
+    cleared before real monitoring starts — so test boldly.</div>
+  </div>
+
+  <p class="foot">© <span id="yr"></span> 4D Climate Solutions · creative · innovative · green · sustainable</p>
+</div>
+<script>
+  document.getElementById('yr').textContent = new Date().getFullYear();
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.check input'));
+  function keyOf(i) { return 'fsm_test_' + i; }
+  function updateBar() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    document.getElementById('bar').textContent =
+      'Your checklist progress: ' + n + ' of ' + boxes.length + ' ticked' + (n === boxes.length ? ' — all done! 🎉' : '');
+  }
+  boxes.forEach(function (b, i) {
+    try { b.checked = localStorage.getItem(keyOf(i)) === '1'; } catch (e) {}
+    b.addEventListener('change', function () {
+      try { localStorage.setItem(keyOf(i), b.checked ? '1' : '0'); } catch (e) {}
+      updateBar();
+    });
+  });
+  updateBar();
+</script>
+</body>
+</html>

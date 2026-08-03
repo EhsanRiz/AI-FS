@@ -408,6 +408,7 @@ function navHTML(route) {
     '<img src="assets/logo-4dcs.png?v=1" alt="4D Climate Solutions" style="width:170px;margin:4px 0 14px">' +
     '<nav class="drawer-nav">' + navLinksHTML(route) + '</nav>' +
     '<div class="drawer-foot">' +
+    '<a class="btn btn-outline btn-block btn-sm" href="testing.html" target="_blank" style="margin-bottom:8px">Testing guide</a>' +
     '<button class="btn btn-secondary btn-block btn-sm" id="drawerSync">Sync now</button>' +
     '<button class="btn btn-outline btn-block btn-sm mt8" id="drawerLogout">Sign out</button>' +
     copyrightHTML() + '</div></aside>';
