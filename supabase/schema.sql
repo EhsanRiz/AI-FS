@@ -807,3 +807,12 @@ end $$;
 -- farmers_registered per supervisor, and visits_7d to totals.
 -- Applied as migration fs_progress_per_supervisor_intelligence.
 -- =============================================================================
+
+-- =============================================================================
+-- v7 (2026-08): farmer detail + richer bootstrap.
+-- Applied as migration fs_farmer_detail_and_richer_bootstrap.
+--   * new RPC fs_farmer_detail(p_token, p_farmer_id) -> full profile (+site,
+--     registered_by name), stats (visits, last_visit_at, ai_visits, issues) and
+--     the last 50 visits with that farmer. Station-scoped for supervisors.
+--   * fs_bootstrap farmers now include field_size, crops, system.
+-- =============================================================================

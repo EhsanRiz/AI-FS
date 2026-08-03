@@ -75,6 +75,24 @@ function farmersOf(siteId) {
   return farmers().filter(function (f) { return f.site_id === Number(siteId); })
     .sort(function (a, b) { return a.name.localeCompare(b.name); });
 }
+function showModal(title, html) {
+  var root = $('#modalRoot');
+  if (!root) { root = document.createElement('div'); root.id = 'modalRoot'; document.body.appendChild(root); }
+  root.innerHTML = '<div class="modal-overlay open" id="modalOverlay"></div>' +
+    '<div class="modal open" role="dialog" aria-modal="true">' +
+    '<button class="modal-x" id="modalX" aria-label="Close">×</button>' +
+    '<h2 style="font-size:17px;color:var(--forest-dark);margin-bottom:10px;padding-right:36px">' + esc(title) + '</h2>' +
+    '<div id="modalBody">' + html + '</div></div>';
+  $('#modalX').onclick = closeModal;
+  $('#modalOverlay').onclick = closeModal;
+  document.addEventListener('keydown', modalEsc);
+}
+function modalEsc(e) { if (e.key === 'Escape') closeModal(); }
+function closeModal() {
+  var root = $('#modalRoot');
+  if (root) root.innerHTML = '';
+  document.removeEventListener('keydown', modalEsc);
+}
 function copyrightHTML() {
   return '<p class="copyright">© ' + new Date().getFullYear() +
     ' 4D Climate Solutions · creative · innovative · green · sustainable</p>';
@@ -481,10 +499,10 @@ function viewSites() {
 
   if (totals && targets) {
     html += '<div class="stat-grid mt12">' +
-      stat(totals.farms_complete + '/' + targets.validation_farms, 'Farms complete') +
-      stat(totals.visits, 'Visits synced') +
-      stat(totals.readings, 'Readings') +
-      stat(totals.samples, 'Soil samples') +
+      stat(totals.farms_complete + '/' + targets.validation_farms, 'Farms complete', 'farms') +
+      stat(totals.visits, 'Visits synced', 'visits_total') +
+      stat(totals.readings, 'Readings', 'readings') +
+      stat(totals.samples, 'Soil samples', 'samples') +
       '</div>';
   } else {
     html += '<div class="info-box mt12">Progress appears here after your first sync.</div>';
@@ -501,8 +519,73 @@ function viewSites() {
   html += copyrightHTML();
   return html;
 }
-function stat(num, label) {
-  return '<div class="stat"><div class="num">' + esc(num) + '</div><div class="lbl">' + esc(label) + '</div></div>';
+function stat(num, label, key) {
+  return '<div class="stat' + (key ? ' stat-click" data-modal="' + key + '"' : '"') + '>' +
+    (key ? '<span class="stat-i">i</span>' : '') +
+    '<div class="num">' + esc(num) + '</div><div class="lbl">' + esc(label) + '</div></div>';
+}
+function progForModals() { return S._prog || (S.boot && S.boot.progress) || {}; }
+function mySiteRows(prog) {
+  var mine = myAssigned();
+  var rows = (prog.sites || []);
+  if (S.me && S.me.role === 'supervisor' && mine.length) {
+    rows = rows.filter(function (ps) { return mine.indexOf(ps.site_id) !== -1; });
+  }
+  return rows;
+}
+function miniTable(rows) {
+  return '<table class="dash-table"><tbody>' + rows.map(function (r) {
+    return '<tr><td>' + r[0] + '</td><td style="text-align:right;white-space:nowrap"><b>' + r[1] + '</b></td></tr>';
+  }).join('') + '</tbody></table>';
+}
+function statModal(key) {
+  var prog = progForModals();
+  var act = S._act;
+  var sites2 = mySiteRows(prog);
+  var t = prog.totals || {};
+  var pend = pendingCount();
+  var esc2 = esc;
+  if (key === 'visits_week') {
+    showModal('Visits this week', '<p class="muted small">Visits synced to the server in the last 7 days.</p>' +
+      miniTable((prog.supervisors || []).filter(function (x) { return Number(x.visits_7d); })
+        .map(function (x) { return [esc2(x.name), x.visits_7d]; })) +
+      (pend ? '<div class="nudge warn mt8">' + pend + ' visit(s) on this phone not yet synced</div>' : ''));
+  } else if (key === 'visits_total') {
+    showModal('Visits by site', miniTable(sites2.filter(function (x) { return Number(x.visits); })
+      .sort(function (a, b) { return b.visits - a.visits; })
+      .map(function (x) { return [esc2(x.sub_area), x.visits + ' visit' + (Number(x.visits) === 1 ? '' : 's')]; })) ||
+      '<p class="muted">No synced visits yet.</p>');
+  } else if (key === 'farmers_engaged') {
+    showModal('Farmer engagement', '<p class="muted small">A farmer counts as engaged once at least one synced visit records them.</p>' +
+      miniTable(sites2.map(function (x) { return [esc2(x.sub_area), (x.farmers_engaged || 0) + ' / ' + (x.farmers_total || 0)]; })));
+  } else if (key === 'ai') {
+    showModal('AI advisory administered', '<p class="muted small">Visits where the AI advisory was administered to the farmer.</p>' +
+      miniTable((prog.supervisors || []).filter(function (x) { return x.role !== 'manager'; })
+        .map(function (x) { return [esc2(x.name), (x.ai_visits || 0) + ' of ' + (x.visits || 0) + ' visits']; })));
+  } else if (key === 'issues') {
+    var list = (act && act.visits ? act.visits.filter(function (v) { return v.issue; }).slice(0, 8) : []);
+    showModal('Issues logged', list.length
+      ? list.map(function (v) {
+          return '<div class="queue-item"><b>' + esc2(v.site) + '</b> · ' + esc2(v.supervisor) + ' · ' + fmtWhen(v.synced_at) +
+            '<div class="small" style="color:var(--danger)">' + esc2(v.issue) + '</div></div>';
+        }).join('')
+      : '<p class="muted small">Issues reported by Field Supervisors during visits appear here.' +
+        (t.issues ? ' Total so far: <b>' + t.issues + '</b>.' : '') + '</p>');
+  } else if (key === 'farms') {
+    showModal('Validation farms', '<p class="muted small">A farm is complete when all 21 readings (7 parameters × 3 replicates) exist.</p>' +
+      miniTable(sites2.filter(function (x) { return x.is_validation_site; })
+        .map(function (x) { return [esc2(x.sub_area), (x.farms_complete || 0) + ' / 3 farms']; })));
+  } else if (key === 'readings') {
+    showModal('Soil readings', '<p class="muted small">Sensor readings captured vs the validation target per site.</p>' +
+      miniTable(sites2.filter(function (x) { return x.is_validation_site; })
+        .map(function (x) { return [esc2(x.sub_area), (x.readings_done || 0) + ' / ' + (x.readings_target || 0)]; })));
+  } else if (key === 'samples') {
+    showModal('Topsoil samples', '<p class="muted small">Visits where a 0–20 cm topsoil sample was collected for laboratory pairing (matched to sensor readings via the sample ID).</p>' +
+      '<p>Total collected: <b>' + (t.samples || 0) + '</b></p>');
+  } else if (key === 'farmers_listed') {
+    showModal('Farmers by site', miniTable(sites2.map(function (x) {
+      return [esc2(x.sub_area), x.farmers_total || 0]; })));
+  }
 }
 function siteRow(s, p, validation) {
   var color = DISTRICT_COLORS[s.district] || '#888';
@@ -531,6 +614,10 @@ function siteRow(s, p, validation) {
 }
 function bindSites() {
   $('#btnLogout').onclick = confirmLogout;
+  $('#view').onclick = function (e) {
+    var k = e.target.closest && e.target.closest('[data-modal]');
+    if (k) statModal(k.getAttribute('data-modal'));
+  };
   if (navigator.onLine) refreshBoot().then(function () {
     if (location.hash === '#/sites') {
       var v = $('#view'); if (v) { v.innerHTML = viewSites(); }
@@ -584,10 +671,10 @@ function viewSmartHome() {
   }
 
   html += '<div class="stat-grid mt12">' +
-    stat(me.visits_7d != null ? me.visits_7d : '—', 'Visits this week') +
-    stat(me.visits != null ? me.visits : '—', 'Visits total') +
-    stat(totalFarmers ? engaged + '/' + totalFarmers : (me.farmers_engaged || 0), 'Farmers engaged') +
-    stat(me.ai_visits != null ? me.ai_visits : '—', 'AI administered') +
+    stat(me.visits_7d != null ? me.visits_7d : '—', 'Visits this week', 'visits_week') +
+    stat(me.visits != null ? me.visits : '—', 'Visits total', 'visits_total') +
+    stat(totalFarmers ? engaged + '/' + totalFarmers : (me.farmers_engaged || 0), 'Farmers engaged', 'farmers_engaged') +
+    stat(me.ai_visits != null ? me.ai_visits : '—', 'AI administered', 'ai') +
     '</div>';
 
   if (totalFarmers) {
@@ -609,6 +696,10 @@ function viewSmartHome() {
 }
 function bindSmartHome() {
   $('#btnLogout').onclick = confirmLogout;
+  $('#view').onclick = function (e) {
+    var k = e.target.closest && e.target.closest('[data-modal]');
+    if (k) statModal(k.getAttribute('data-modal'));
+  };
   if (navigator.onLine) refreshBoot().then(function () {
     var r = (location.hash || '#/home').replace(/^#/, '');
     if (r === '/home' || r === '') {
@@ -627,6 +718,64 @@ function confirmLogout() {
 /* --------------------------------------------------------------- farmers -- */
 var farmerSearch = '';
 var editingFarmerId = null;
+function prodLabel(p) {
+  return p === 'H' ? 'Horticulture' : (p === 'A' ? 'Agronomy' : (p === 'H+A' ? 'Horticulture + Agronomy' : null));
+}
+function farmerVisitRow(v, localState) {
+  return '<div class="queue-item">' +
+    '<div class="row spread"><b>' + fmtWhen(v.submitted_at || v.synced_at || v.updated_at) + '</b>' +
+    (localState ? '<span class="chip state-' + localState + '">' + localState + '</span>'
+                : (v.supervisor ? '<span class="chip grey">' + esc(v.supervisor) + '</span>' : '')) + '</div>' +
+    '<div class="muted small">' +
+    (v.ai_administered === true ? 'AI ✓' : (v.ai_administered === false ? 'AI ✗' : '')) +
+    (Number(v.readings_count) || (v.readings || []).length ? ' · ' + (v.readings_count || v.readings.length) + ' readings' : ' · no soil data') +
+    (v.sample_collected ? ' · sample ' + esc(v.sample_id || '✓') : '') +
+    '</div>' +
+    (v.issue ? '<div class="small" style="color:var(--danger)">' + esc(v.issue) + '</div>' : '') +
+    (v.notes ? '<div class="small muted">' + esc(v.notes) + '</div>' : '') +
+    '</div>';
+}
+function farmerModal(fid) {
+  var f = farmers().find(function (x) { return x.id === fid; });
+  if (!f) return;
+  var st = siteById(f.site_id);
+  var rows = [
+    ['Station', st ? st.sub_area + ' (' + st.rc + ' RC)' : ''],
+    ['Village', f.village], ['Gender', f.gender === 'F' ? 'Female' : (f.gender === 'M' ? 'Male' : null)],
+    ['Age', f.age], ['Production', prodLabel(f.production)],
+    ['Field size', f.field_size], ['Crops', f.crops], ['System', f.system],
+    ['Phone', f.phone ? '<a href="tel:' + esc(f.phone.split('/')[0]) + '">' + esc(f.phone) + '</a>' : null]
+  ].filter(function (r) { return r[1] != null && r[1] !== ''; });
+  var localVisits = S.queue.filter(function (r) { return r.farmer_id === fid; });
+  var html = '<table class="dash-table"><tbody>' + rows.map(function (r) {
+      return '<tr><td style="color:var(--grey);white-space:nowrap">' + r[0] + '</td><td>' + (r[0] === 'Phone' ? r[1] : esc(r[1])) + '</td></tr>';
+    }).join('') + '</tbody></table>' +
+    (f.source === 'fs_registered' ? '<p class="small muted mt8">Registered in the field' + (f._state ? ' — ' + f._state : '') + '</p>' : '') +
+    '<h3 class="mt12">Visit history</h3>' +
+    (localVisits.length ? localVisits.map(function (v) { return farmerVisitRow(v, v.state !== 'synced' ? v.state : null); }).join('') : '') +
+    '<div id="farmerHistory">' +
+    (navigator.onLine ? '<p class="muted small">Loading synced visits…</p>'
+                      : '<p class="muted small">Connect to see the full synced history.</p>') +
+    '</div>';
+  showModal(f.name, html);
+  if (!navigator.onLine) return;
+  rpc('fs_farmer_detail', { p_token: S.token, p_farmer_id: fid }).then(function (d) {
+    var box = $('#farmerHistory'); if (!box) return;
+    var localIds = {};
+    localVisits.forEach(function (v) { localIds[v.id] = true; });
+    var serverVisits = (d.visits || []).filter(function (v) { return !localIds[v.id]; });
+    var stats = d.stats || {};
+    box.innerHTML =
+      '<p class="small muted">' + (stats.visits || 0) + ' synced visit(s)' +
+      (stats.ai_visits ? ' · AI administered ' + stats.ai_visits + '×' : '') +
+      (stats.last_visit_at ? ' · last ' + fmtWhen(stats.last_visit_at) : '') + '</p>' +
+      (serverVisits.length ? serverVisits.map(function (v) { return farmerVisitRow(v, null); }).join('')
+        : (localVisits.length ? '' : '<p class="muted small">No visits recorded with this farmer yet.</p>'));
+  }).catch(function (err) {
+    var box = $('#farmerHistory');
+    if (box && !handleAuthError(err)) box.innerHTML = '<p class="small" style="color:var(--danger)">' + esc(err.message) + '</p>';
+  });
+}
 function farmerFormFields(prefix, f) {
   f = f || {};
   return '<div class="field"><label>Farmer full name</label><input id="' + prefix + 'Name" type="text" value="' + esc(f.name || '') + '"></div>' +
@@ -666,7 +815,7 @@ function viewFarmers() {
                     f.gender === 'F' ? 'Female' : (f.gender === 'M' ? 'Male' : null),
                     f.production].filter(Boolean).join(' · ');
         var row = '<div class="site-item">' +
-          '<span class="site-main"><span class="site-name">' + esc(f.name) +
+          '<span class="site-main" data-farmerdetail="' + f.id + '" style="cursor:pointer"><span class="site-name">' + esc(f.name) +
           (f.source === 'fs_registered' ? ' <span class="chip blue">new</span>' : '') +
           (f._state ? ' <span class="chip state-' + f._state + '">' + f._state + '</span>' : '') +
           '</span><span class="site-meta">' + esc(meta || '—') + '</span></span>' +
@@ -709,6 +858,8 @@ function bindFarmers() {
   });
   // row actions via onclick property (view element persists across list re-renders)
   $('#view').onclick = function (e) {
+    var detEl = e.target.closest && e.target.closest('[data-farmerdetail]');
+    if (detEl) { farmerModal(detEl.getAttribute('data-farmerdetail')); return; }
     var editId = e.target.getAttribute('data-editfarmer');
     var saveId = e.target.getAttribute('data-savefarmer');
     if (editId) {
@@ -738,6 +889,7 @@ function viewMap() {
       return '<span class="row"><span class="site-dot" style="background:' + DISTRICT_COLORS[d] + '"></span>' + esc(d) + '</span>';
     }).join('') +
     '<span class="row"><span class="site-dot" style="background:#fff;border:2.5px solid #a16207;width:15px;height:15px"></span>Validation site</span>' +
+    (myAssigned().length ? '<span class="row"><span class="site-dot" style="background:rgba(141,198,63,.3);border:2px dashed #8DC63F"></span>Your area</span>' : '') +
     '</div>';
 }
 function bindMap() {
@@ -748,11 +900,24 @@ function bindMap() {
   }
   var map = L.map('map', { zoomControl: true });
   var pts = sites();
-  map.fitBounds(pts.map(function (s) { return [s.lat, s.lon]; }), { padding: [24, 24] });
+  var mine = myAssigned();
+  var myPts = pts.filter(function (s) { return mine.indexOf(s.id) !== -1; });
+  if (myPts.length) {
+    map.fitBounds(myPts.map(function (s) { return [s.lat, s.lon]; }), { padding: [70, 70], maxZoom: 12 });
+  } else {
+    map.fitBounds(pts.map(function (s) { return [s.lat, s.lon]; }), { padding: [24, 24] });
+  }
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 17,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
+  // lime halo around the FS's own station(s)
+  myPts.forEach(function (s) {
+    L.circle([s.lat, s.lon], {
+      radius: 2500, color: '#8DC63F', weight: 2, dashArray: '6 6',
+      fillColor: '#8DC63F', fillOpacity: 0.15
+    }).addTo(map);
+  });
   var pm = siteProgressMap();
   pts.forEach(function (s) {
     var color = DISTRICT_COLORS[s.district] || '#888';
@@ -766,8 +931,10 @@ function bindMap() {
     m.bindPopup('<b>' + esc(s.sub_area) + '</b> (' + esc(s.rc) + ' RC)<br>' +
       esc(s.district) + ' · ' + esc(s.zone) + ' · ' + s.farmers + ' farmers' +
       (s.is_validation_site ? '<br><b>Validation site</b> — ' + (p ? p.farms_complete : 0) + '/3 farms complete' : '') +
+      (mine.indexOf(s.id) !== -1 ? '<br><b style="color:#5a8f1e">★ Your station</b>' : '') +
       (p && Number(p.visits) ? '<br>' + p.visits + ' visit(s), last ' + fmtWhen(p.last_visit_at) : '') +
       (canVisit(s.id) ? '<br><a href="#/visit?site=' + s.id + '">Start visit here</a>' : ''));
+    if (mine.indexOf(s.id) !== -1 && myPts.length === 1) m.openPopup();
   });
   S.map = map;
 }
@@ -1250,6 +1417,7 @@ function bindDash() {
 }
 function renderDash(prog, act) {
   var el = $('#dashBody'); if (!el) return;
+  S._prog = prog; S._act = act;
   var t = prog.totals, g = prog.targets;
   var html = '';
 
@@ -1274,14 +1442,14 @@ function renderDash(prog, act) {
   }
 
   html += '<div class="stat-grid">' +
-    stat(t.visits, 'Total visits') +
-    stat((t.farmers_engaged || 0) + '/' + (t.farmers || 0), 'Farmers engaged') +
-    stat(t.ai_visits || 0, 'AI administered') +
-    stat(t.issues || 0, 'Issues logged') +
-    stat(t.farms_complete + '/' + g.validation_farms, 'Farms complete') +
-    stat(t.readings, 'Readings') +
-    stat(t.samples, 'Lab samples') +
-    stat(t.farmers || 0, 'Farmers listed') +
+    stat(t.visits, 'Total visits', 'visits_total') +
+    stat((t.farmers_engaged || 0) + '/' + (t.farmers || 0), 'Farmers engaged', 'farmers_engaged') +
+    stat(t.ai_visits || 0, 'AI administered', 'ai') +
+    stat(t.issues || 0, 'Issues logged', 'issues') +
+    stat(t.farms_complete + '/' + g.validation_farms, 'Farms complete', 'farms') +
+    stat(t.readings, 'Readings', 'readings') +
+    stat(t.samples, 'Lab samples', 'samples') +
+    stat(t.farmers || 0, 'Farmers listed', 'farmers_listed') +
     '</div>';
 
   // validation site progress
@@ -1352,6 +1520,8 @@ function renderDash(prog, act) {
   });
   // onclick property: #dashBody persists across bindDash refreshes
   el.onclick = function (e) {
+    var mk = e.target.closest && e.target.closest('[data-modal]');
+    if (mk) { statModal(mk.getAttribute('data-modal')); return; }
     var pinId = e.target.getAttribute('data-pin');
     var togId = e.target.getAttribute('data-toggle');
     if (pinId) {
@@ -1377,7 +1547,7 @@ function fmtDist(m) {
 }
 
 /* ------------------------------------------------------------------ boot -- */
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', function () { closeModal(); render(); });
 window.addEventListener('online', function () {
   updateNetDot();
   if (pendingCount()) toast('Back online — syncing your visits…');

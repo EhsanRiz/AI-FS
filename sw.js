@@ -1,19 +1,19 @@
 /* FS Field Monitoring — service worker.
    App-shell cache-first so the app opens with no signal in the field.
    Bump VERSION whenever app.js / styles.css / index.html change. */
-var VERSION = 'fsm-v5';
+var VERSION = 'fsm-v6';
 var PRECACHE = [
   './',
   './index.html',
-  './styles.css?v=4',
-  './app.js?v=5',
+  './styles.css?v=5',
+  './app.js?v=6',
   './data/sites.js?v=1',
   './assets/logo-4dcs.png?v=1',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+  './assets/vendor/leaflet/leaflet.css',
+  './assets/vendor/leaflet/leaflet.js'
 ];
 
 self.addEventListener('install', function (e) {
