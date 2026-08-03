@@ -825,3 +825,11 @@ end $$;
 --     account' (helper fs_guard_not_viewer); team management stays
 --     manager-only. fs_add_supervisor accepts p_role = 'viewer'.
 -- =============================================================================
+
+-- =============================================================================
+-- v9 (2026-08): visit capture restricted to Field Supervisors.
+-- Applied as migration fs_visits_supervisor_only: fs_submit_visit now calls
+-- fs_guard_supervisor_only (managers and viewers get 'Only Field Supervisors
+-- can record visits'). fs_register_farmer stays open to supervisors (their
+-- station) and managers (data corrections); viewers remain fully read-only.
+-- =============================================================================

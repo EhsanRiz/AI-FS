@@ -49,7 +49,7 @@ function defaultSiteId() { var a = myAssigned(); return a.length === 1 ? a[0] : 
 // Supervisors with an assigned station may only capture there (also enforced
 // server-side in fs_submit_visit); managers and unassigned accounts see all.
 function visitableSites() {
-  if (isViewer()) return [];
+  if (!S.me || S.me.role !== 'supervisor') return [];   // only FS capture visits
   var a = myAssigned();
   if (S.me && S.me.role === 'supervisor' && a.length) {
     return sites().filter(function (s) { return a.indexOf(s.id) !== -1; });
@@ -351,6 +351,7 @@ function render() {
     navHTML(route) +
     '<div id="toast"></div>';
 
+  if (route.indexOf('/visit') === 0 && S.me && S.me.role !== 'supervisor') { location.hash = '#/home'; return; }
   var view = $('#view');
   if (route.indexOf('/visit') === 0) { view.innerHTML = viewVisit(route); bindVisit(); }
   else if (route === '/farmers') { view.innerHTML = viewFarmers(); bindFarmers(); }
@@ -391,7 +392,7 @@ function navItems(route) {
     { href: '#/farmers', icon: 'users', label: 'Farmers', active: route === '/farmers' },
     { href: '#/map', icon: 'map', label: 'Map', active: route === '/map' }
   ];
-  if (!isViewer()) items.push({ href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pendingCount() });
+  if (S.me && S.me.role === 'supervisor') items.push({ href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pendingCount() });
   return items;
 }
 function navLinksHTML(route) {
@@ -500,7 +501,8 @@ function viewSites() {
   var vSites = sites().filter(function (s) { return s.is_validation_site; }).sort(bySort);
   var oSites = sites().filter(function (s) { return !s.is_validation_site; }).sort(bySort);
 
-  var html = isViewer() ? '' : '<a class="btn btn-primary btn-block" href="#/visit">+ New field visit</a>';
+  var html = (S.me && S.me.role === 'supervisor')
+    ? '<a class="btn btn-primary btn-block" href="#/visit">+ New field visit</a>' : '';
 
   if (totals && targets) {
     html += '<div class="stat-grid mt12">' +
@@ -792,13 +794,13 @@ function farmerFormFields(prefix, f) {
     '<div class="field" style="flex:1"><label>Phone</label><input id="' + prefix + 'Phone" type="tel" value="' + esc(f.phone || '') + '"></div></div>';
 }
 function viewFarmers() {
-  // viewers browse every site's farmers (read-only); others see their capture scope
-  var vSites = isViewer() ? sites() : visitableSites();
+  // staff browse every site's farmers; FS see their capture scope
+  var vSites = (S.me && S.me.role === 'supervisor') ? visitableSites() : sites();
   var q = farmerSearch.toLowerCase();
   var html = '<div class="field" style="margin-bottom:10px">' +
     '<input id="farmerSearch" type="search" placeholder="Search farmers…" value="' + esc(farmerSearch) + '"></div>';
 
-  if (!isViewer())
+  if (S.me && S.me.role === 'supervisor')
   html += '<div class="card"><h3>Register a new farmer</h3>' +
     (vSites.length > 1
       ? '<div class="field"><label>Site</label><select id="rfSite"><option value="">Choose…</option>' +
@@ -829,7 +831,9 @@ function viewFarmers() {
           (isViewer() ? '' :
             '<span class="row" style="gap:6px">' +
             '<button class="btn btn-outline btn-sm" data-editfarmer="' + f.id + '">Edit</button>' +
-            '<a class="btn btn-outline btn-sm" href="#/visit?site=' + st.id + '&farmer=' + f.id + '">Visit</a></span>') +
+            (S.me && S.me.role === 'supervisor'
+              ? '<a class="btn btn-outline btn-sm" href="#/visit?site=' + st.id + '&farmer=' + f.id + '">Visit</a>' : '') +
+            '</span>') +
           '</div>';
         if (editingFarmerId === f.id) {
           row += '<div style="border:1.5px dashed var(--line);border-radius:12px;padding:12px;margin:4px 0 10px">' +
@@ -1424,6 +1428,65 @@ function bindDash() {
     if (el) el.innerHTML = '<div class="error-box">' + esc(err.message) + '</div>';
   });
 }
+function chartVisitsByFS(prog) {
+  var rows = (prog.supervisors || []).filter(function (x) { return x.role === 'supervisor'; })
+    .sort(function (a, b) { return (b.visits || 0) - (a.visits || 0); });
+  var withData = rows.filter(function (x) { return Number(x.visits); });
+  if (!withData.length) return '<p class="muted small">Chart appears once visits start syncing.</p>';
+  var max = Math.max.apply(null, withData.map(function (x) { return x.visits; }));
+  return '<div class="chart-legend">' +
+    '<span class="row" style="gap:6px"><span class="sw" style="background:#006838"></span>AI administered</span>' +
+    '<span class="row" style="gap:6px"><span class="sw" style="background:#00a0dc"></span>Without AI</span></div>' +
+    withData.map(function (x) {
+      var ai = Number(x.ai_visits || 0), rest = Number(x.visits) - ai;
+      return '<div class="hbar-row" title="' + esc(x.name) + ': ' + x.visits + ' visits, ' + ai + ' with AI advisory">' +
+        '<span class="hbar-label">' + esc((x.name || '').split(/\s+/)[0]) + '</span>' +
+        '<span class="hbar-bars">' +
+        (ai ? '<span class="hbar-seg" style="background:#006838;width:' + (ai / max * 100) + '%"></span>' : '') +
+        (rest ? '<span class="hbar-seg" style="background:#00a0dc;width:' + (rest / max * 100) + '%"></span>' : '') +
+        '</span>' +
+        '<span class="hbar-val">' + x.visits + (ai ? ' (' + ai + ' AI)' : '') + '</span></div>';
+    }).join('');
+}
+function chartEngagement(prog) {
+  var rows = (prog.sites || []).filter(function (x) { return Number(x.farmers_total); })
+    .map(function (x) {
+      return { name: x.sub_area, e: Number(x.farmers_engaged || 0), t: Number(x.farmers_total),
+               pct: Number(x.farmers_engaged || 0) / Number(x.farmers_total) };
+    }).sort(function (a, b) { return b.pct - a.pct || b.e - a.e; });
+  if (!rows.length) return '<p class="muted small">No farmer data yet.</p>';
+  return rows.map(function (x) {
+    return '<div class="hbar-row" title="' + esc(x.name) + ': ' + x.e + ' of ' + x.t + ' farmers engaged">' +
+      '<span class="hbar-label">' + esc(x.name) + '</span>' +
+      '<span class="hbar-track"><span class="hbar-seg" style="background:#006838;width:' + Math.min(100, Math.round(x.pct * 100)) + '%"></span></span>' +
+      '<span class="hbar-val">' + x.e + '/' + x.t + '</span></div>';
+  }).join('');
+}
+function chartWeekly(act) {
+  var now = new Date();
+  var weeks = [];
+  for (var i = 7; i >= 0; i--) {
+    var d = new Date(now.getTime() - i * 7 * 86400000);
+    var day = (d.getDay() + 6) % 7;                       // Monday start
+    var start = new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
+    weeks.push({ start: start, n: 0 });
+  }
+  ((act && act.visits) || []).forEach(function (v) {
+    var t = new Date(v.synced_at).getTime();
+    for (var j = weeks.length - 1; j >= 0; j--) {
+      if (t >= weeks[j].start.getTime()) { weeks[j].n++; break; }
+    }
+  });
+  if (!weeks.some(function (w) { return w.n; })) return '<p class="muted small">Chart appears once visits start syncing.</p>';
+  var max = Math.max.apply(null, weeks.map(function (w) { return w.n; }));
+  return '<div class="cols">' + weeks.map(function (w) {
+    var label = w.start.getDate() + ' ' + w.start.toLocaleDateString(undefined, { month: 'short' });
+    return '<div class="col" title="Week of ' + label + ': ' + w.n + ' visit' + (w.n === 1 ? '' : 's') + '">' +
+      '<span class="cv">' + (w.n || '') + '</span>' +
+      '<span class="cbar" style="height:' + (w.n ? Math.max(6, Math.round(w.n / max * 82)) : 2) + 'px' + (w.n ? '' : ';background:#eceae3') + '"></span>' +
+      '<span class="cl">' + label + '</span></div>';
+  }).join('') + '</div>';
+}
 function renderDash(prog, act) {
   var el = $('#dashBody'); if (!el) return;
   S._prog = prog; S._act = act;
@@ -1461,6 +1524,10 @@ function renderDash(prog, act) {
     stat(t.samples, 'Lab samples', 'samples') +
     stat(t.farmers || 0, 'Farmers listed', 'farmers_listed') +
     '</div>';
+
+  html += '<div class="card mt12" data-modal="ai"><h2>Visits by Field Supervisor</h2>' + chartVisitsByFS(prog) + '</div>' +
+    '<div class="card" data-modal="farmers_engaged"><h2>Farmer engagement by site</h2>' + chartEngagement(prog) + '</div>' +
+    '<div class="card" data-modal="visits_week"><h2>Visits per week</h2>' + chartWeekly(act) + '</div>';
 
   // validation site progress
   var vSites = (prog.sites || []).filter(function (s) { return s.is_validation_site; });
