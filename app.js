@@ -44,10 +44,12 @@ function readJSON(k) {
 }
 function sites() { return (S.boot && S.boot.sites) || (window.FSM_SEED || {}).sites || []; }
 function myAssigned() { return (S.me && S.me.assigned_site_ids) || []; }
+function isViewer() { return S.me && S.me.role === 'viewer'; }
 function defaultSiteId() { var a = myAssigned(); return a.length === 1 ? a[0] : null; }
 // Supervisors with an assigned station may only capture there (also enforced
 // server-side in fs_submit_visit); managers and unassigned accounts see all.
 function visitableSites() {
+  if (isViewer()) return [];
   var a = myAssigned();
   if (S.me && S.me.role === 'supervisor' && a.length) {
     return sites().filter(function (s) { return a.indexOf(s.id) !== -1; });
@@ -356,7 +358,7 @@ function render() {
   else if (route === '/queue') { view.innerHTML = viewQueue(); bindQueue(); }
   else if (route === '/sites') { view.innerHTML = viewSites(); bindSites(); }
   else if (route === '/dash') { location.hash = '#/home'; return; }
-  else if (S.me && S.me.role === 'manager') { view.innerHTML = viewDash(); bindDash(); }
+  else if (S.me && (S.me.role === 'manager' || S.me.role === 'viewer')) { view.innerHTML = viewDash(); bindDash(); }
   else { view.innerHTML = viewSmartHome(); bindSmartHome(); }
   updateNetDot();
   bindDrawer();
@@ -366,7 +368,8 @@ function headerHTML() {
   return '<header class="app-header">' +
     '<button class="burger" id="btnBurger" aria-label="Menu"><span></span><span></span><span></span></button>' +
     '<div><div class="title">FS Field Monitoring</div>' +
-    '<div class="sub">' + esc(S.me ? S.me.name : '') + (S.me && S.me.role === 'manager' ? ' · Manager' : '') + '</div></div>' +
+    '<div class="sub">' + esc(S.me ? S.me.name : '') +
+    (S.me && S.me.role === 'manager' ? ' · Manager' : (S.me && S.me.role === 'viewer' ? ' · Viewer' : '')) + '</div></div>' +
     '<div class="header-actions">' +
     '<span class="net-dot' + (navigator.onLine ? '' : ' off') + '" id="netDot" title="Connection"></span>' +
     '<button class="icon-btn" id="btnLogout">Sign out</button>' +
@@ -382,13 +385,14 @@ var ICONS = {
 };
 
 function navItems(route) {
-  return [
+  var items = [
     { href: '#/home', icon: 'dash', label: 'Home', active: route === '/home' || route === '' },
     { href: '#/sites', icon: 'home', label: 'Sites', active: route === '/sites' || route.indexOf('/visit') === 0 },
     { href: '#/farmers', icon: 'users', label: 'Farmers', active: route === '/farmers' },
-    { href: '#/map', icon: 'map', label: 'Map', active: route === '/map' },
-    { href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pendingCount() }
+    { href: '#/map', icon: 'map', label: 'Map', active: route === '/map' }
   ];
+  if (!isViewer()) items.push({ href: '#/queue', icon: 'queue', label: 'Sync', active: route === '/queue', badge: pendingCount() });
+  return items;
 }
 function navLinksHTML(route) {
   return navItems(route).map(function (i) {
@@ -495,7 +499,7 @@ function viewSites() {
   var vSites = sites().filter(function (s) { return s.is_validation_site; }).sort(bySort);
   var oSites = sites().filter(function (s) { return !s.is_validation_site; }).sort(bySort);
 
-  var html = '<a class="btn btn-primary btn-block" href="#/visit">+ New field visit</a>';
+  var html = isViewer() ? '' : '<a class="btn btn-primary btn-block" href="#/visit">+ New field visit</a>';
 
   if (totals && targets) {
     html += '<div class="stat-grid mt12">' +
@@ -787,11 +791,13 @@ function farmerFormFields(prefix, f) {
     '<div class="field" style="flex:1"><label>Phone</label><input id="' + prefix + 'Phone" type="tel" value="' + esc(f.phone || '') + '"></div></div>';
 }
 function viewFarmers() {
-  var vSites = visitableSites();
+  // viewers browse every site's farmers (read-only); others see their capture scope
+  var vSites = isViewer() ? sites() : visitableSites();
   var q = farmerSearch.toLowerCase();
   var html = '<div class="field" style="margin-bottom:10px">' +
     '<input id="farmerSearch" type="search" placeholder="Search farmers…" value="' + esc(farmerSearch) + '"></div>';
 
+  if (!isViewer())
   html += '<div class="card"><h3>Register a new farmer</h3>' +
     (vSites.length > 1
       ? '<div class="field"><label>Site</label><select id="rfSite"><option value="">Choose…</option>' +
@@ -819,9 +825,10 @@ function viewFarmers() {
           (f.source === 'fs_registered' ? ' <span class="chip blue">new</span>' : '') +
           (f._state ? ' <span class="chip state-' + f._state + '">' + f._state + '</span>' : '') +
           '</span><span class="site-meta">' + esc(meta || '—') + '</span></span>' +
-          '<span class="row" style="gap:6px">' +
-          '<button class="btn btn-outline btn-sm" data-editfarmer="' + f.id + '">Edit</button>' +
-          '<a class="btn btn-outline btn-sm" href="#/visit?site=' + st.id + '&farmer=' + f.id + '">Visit</a></span>' +
+          (isViewer() ? '' :
+            '<span class="row" style="gap:6px">' +
+            '<button class="btn btn-outline btn-sm" data-editfarmer="' + f.id + '">Edit</button>' +
+            '<a class="btn btn-outline btn-sm" href="#/visit?site=' + st.id + '&farmer=' + f.id + '">Visit</a></span>') +
           '</div>';
         if (editingFarmerId === f.id) {
           row += '<div style="border:1.5px dashed var(--line);border-radius:12px;padding:12px;margin:4px 0 10px">' +
@@ -837,7 +844,7 @@ function viewFarmers() {
 }
 function bindFarmers() {
   $('#btnLogout').onclick = confirmLogout;
-  $('#farmerSearch').addEventListener('input', function () {
+  if ($('#farmerSearch')) $('#farmerSearch').addEventListener('input', function () {
     farmerSearch = this.value;
     var v = $('#view');
     var pos = this.selectionStart;
@@ -845,7 +852,7 @@ function bindFarmers() {
     var inp = $('#farmerSearch');
     inp.focus(); inp.setSelectionRange(pos, pos);
   });
-  $('#btnRegFarmer').addEventListener('click', function () {
+  if ($('#btnRegFarmer')) $('#btnRegFarmer').addEventListener('click', function () {
     var vSites = visitableSites();
     var siteId = vSites.length === 1 ? vSites[0].id : Number(($('#rfSite') || {}).value || 0);
     registerFarmer({
@@ -1418,6 +1425,7 @@ function bindDash() {
 function renderDash(prog, act) {
   var el = $('#dashBody'); if (!el) return;
   S._prog = prog; S._act = act;
+  var canManage = S.me && S.me.role === 'manager';
   var t = prog.totals, g = prog.targets;
   var html = '';
 
@@ -1467,24 +1475,26 @@ function renderDash(prog, act) {
     return '<div class="team-item"><span class="avatar">' + esc(initials) + '</span>' +
       '<span class="site-main"><span class="site-name">' + esc(m.name) +
       (m.role === 'manager' ? ' <span class="chip blue">manager</span>' : '') +
+      (m.role === 'viewer' ? ' <span class="chip grey">viewer</span>' : '') +
       (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
       '<span class="site-meta">' + esc(m.username || m.phone || '') +
       (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits' +
       (Number(m.farmers_registered) ? ' · +' + m.farmers_registered + ' farmers' : '') +
       ' · last: ' + fmtWhen(m.last_synced_at) +
       (m.last_gps ? ' @ ' + esc(m.last_gps.site) : '') + '</span></span>' +
-      '<span class="row" style="gap:6px">' +
+      (canManage ? '<span class="row" style="gap:6px">' +
       '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
       '<button class="btn ' + (m.active ? 'btn-danger-outline' : 'btn-secondary') + ' btn-sm" data-toggle="' + m.id + '" data-active="' + m.active + '" data-name="' + esc(m.name) + '">' +
-      (m.active ? 'Off' : 'On') + '</button></span></div>';
+      (m.active ? 'Off' : 'On') + '</button></span>' : '') + '</div>';
   }).join('') +
-    '<h3 class="mt12">Add team member</h3>' +
+    (canManage ? '<h3 class="mt12">Add team member</h3>' +
     '<div class="field"><input id="nName" placeholder="Full name"></div>' +
     '<div class="row"><div class="field" style="flex:1"><input id="nUser" autocapitalize="none" placeholder="Username (first name)"></div>' +
     '<div class="field" style="flex:1"><input id="nPin" type="text" inputmode="numeric" placeholder="PIN (4-8 digits)"></div></div>' +
     '<div class="field"><input id="nPhone" type="tel" placeholder="Phone (optional)"></div>' +
-    '<div class="field"><select id="nRole"><option value="supervisor">Field Supervisor</option><option value="manager">Manager</option></select></div>' +
-    '<button class="btn btn-primary btn-block" id="btnAddMember">Add member</button>' +
+    '<div class="field"><select id="nRole"><option value="supervisor">Field Supervisor</option>' +
+    '<option value="viewer">Viewer (read-only)</option><option value="manager">Manager</option></select></div>' +
+    '<button class="btn btn-primary btn-block" id="btnAddMember">Add member</button>' : '') +
     '</div>';
 
   // activity feed
@@ -1510,7 +1520,7 @@ function renderDash(prog, act) {
 
   el.innerHTML = html;
 
-  $('#btnAddMember').addEventListener('click', function () {
+  if ($('#btnAddMember')) $('#btnAddMember').addEventListener('click', function () {
     var name = $('#nName').value.trim(), phone = $('#nPhone').value.trim(), pin = $('#nPin').value.trim();
     var user = $('#nUser').value.trim(), role = $('#nRole').value;
     if (!name || !pin || (!user && !phone)) { toast('Fill in name, PIN and a username (or phone)'); return; }

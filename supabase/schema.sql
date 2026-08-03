@@ -816,3 +816,12 @@ end $$;
 --     the last 50 visits with that farmer. Station-scoped for supervisors.
 --   * fs_bootstrap farmers now include field_size, crops, system.
 -- =============================================================================
+
+-- =============================================================================
+-- v8 (2026-08): read-only 'viewer' role. Applied as migration fs_viewer_role.
+--   * fs_supervisors.role check now allows 'viewer'.
+--   * viewers can call fs_bootstrap/fs_progress/fs_activity/fs_farmer_detail;
+--     fs_submit_visit and fs_register_farmer raise 'This is a view-only
+--     account' (helper fs_guard_not_viewer); team management stays
+--     manager-only. fs_add_supervisor accepts p_role = 'viewer'.
+-- =============================================================================

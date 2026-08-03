@@ -32,9 +32,11 @@ as a PWA from the browser menu on phones.
   `fs_add_supervisor`, `fs_set_supervisor`).
 - **Auth:** first-name username (or phone) + PIN — one login field takes either. `fs_login`
   returns a 60-day bearer token (sha256-hashed at rest; bcrypt PINs; 8 failed attempts →
-  15-min lockout). Roles: `supervisor` (capture) and `manager` (dashboard, activity feed,
-  team management). The 17 Field Officers are seeded with usernames = first names (the two
-  Rorisangs are `rorisangt`/`rorisangs`); phones can be added later.
+  15-min lockout). Roles: `supervisor` (capture, station-locked), `viewer` (read-only
+  monitoring — dashboard, activity, sites, farmers, map; all writes blocked server-side) and
+  `manager` (everything incl. team management). The 17 Field Officers are seeded with
+  usernames = first names (the two Rorisangs are `rorisangt`/`rorisangs`); programme staff
+  have personal accounts; phones can be added later.
 - **Station lock:** each Field Officer is assigned their resource centre
   (`fs_supervisors.assigned_site_ids`; the Peka officer covers Peka + Tabola). The app only
   offers their own station for capture, and `fs_submit_visit` rejects any other site
@@ -54,6 +56,16 @@ as a PWA from the browser menu on phones.
 | Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → AI advisory administered Yes/No (**required**) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
 | Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
+
+## Testing
+
+See `TESTING.md` for the staff UAT script (install, offline drills, role checks). After
+sign-off, wipe test data before go-live:
+
+```sql
+delete from fs_photos; delete from fs_readings; delete from fs_visits;
+delete from fs_farmers where source = 'fs_registered';
+```
 
 ## Managing accounts
 
