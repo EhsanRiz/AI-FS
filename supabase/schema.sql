@@ -839,3 +839,15 @@ end $$;
 -- drill-down (visit + names, readings, photos). Staff see any visit;
 -- supervisors their own station's. Applied as migration fs_visit_detail.
 -- =============================================================================
+
+-- =============================================================================
+-- v11-v12 (2026-08): drill-down profiles.
+--   * fs_site_detail(p_token, p_site_id): resource-centre profile — site info,
+--     assigned FS with activity, stats (visits/engagement/AI/issues/samples,
+--     validation progress), every farmer with visit counts, last 20 visits.
+--     Staff any site; supervisors their own station(s).
+--   * fs_supervisor_detail(p_token, p_supervisor_id): team-member profile —
+--     identity+station, stats (visits/7d/AI/issues/engaged/registered/samples,
+--     last GPS), last 20 visits. Staff only (or self).
+-- Applied as migrations fs_site_detail and fs_supervisor_detail.
+-- =============================================================================

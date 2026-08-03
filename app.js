@@ -97,6 +97,25 @@ function renderModalFrame(title, html) {
     if (e.target.id === 'modalX' || e.target.id === 'modalBack' || e.target.id === 'modalOverlay') return;
     var vEl = e.target.closest && e.target.closest('[data-visit]');
     if (vEl) { visitDetailModal(vEl.getAttribute('data-visit')); return; }
+    var spEl = e.target.closest && e.target.closest('[data-siteprofile]');
+    if (spEl) { siteProfileModal(spEl.getAttribute('data-siteprofile')); return; }
+    var fpEl = e.target.closest && e.target.closest('[data-fsprofile]');
+    if (fpEl) { fsProfileModal(fpEl.getAttribute('data-fsprofile')); return; }
+    var fdEl = e.target.closest && e.target.closest('[data-farmerdetail]');
+    if (fdEl) { farmerModal(fdEl.getAttribute('data-farmerdetail')); return; }
+    var sfEl = e.target.closest && e.target.closest('[data-sitefarmers]');
+    if (sfEl) {
+      var d = S._siteDetail || {};
+      showModal('Farmers — ' + ((d.site || {}).sub_area || ''),
+        ((d.farmers) || []).map(function (f) {
+          return '<div class="queue-item act-row" data-farmerdetail="' + f.id + '">' +
+            '<div class="row spread"><b>' + esc(f.name) + '</b>' +
+            (Number(f.visits) ? '<span class="chip">' + f.visits + ' visit' + (Number(f.visits) === 1 ? '' : 's') + '</span>'
+                              : '<span class="chip grey">not yet visited</span>') + '</div>' +
+            (f.village ? '<div class="muted small">' + esc(f.village) + '</div>' : '') + '</div>';
+        }).join(''));
+      return;
+    }
     var sEl = e.target.closest && e.target.closest('[data-sitevisits]');
     if (sEl) siteVisitsModal(sEl.getAttribute('data-sitevisits'));
   };
@@ -221,6 +240,91 @@ function actRowHTML(v) {
     '</div>' +
     (v.issue ? '<div class="small" style="color:var(--danger)">' + esc(v.issue) + '</div>' : '') +
     '</div>';
+}
+function statLine(rows) {
+  return '<table class="dash-table"><tbody>' + rows.filter(function (r) { return r[1] != null; })
+    .map(function (r) { return '<tr><td style="color:var(--grey);white-space:nowrap">' + r[0] + '</td><td>' + r[1] + '</td></tr>'; })
+    .join('') + '</tbody></table>';
+}
+function siteProfileModal(siteId) {
+  if (!navigator.onLine) { toast('Connect to view site details'); return; }
+  var st = siteById(siteId) || {};
+  showModal(st.sub_area || 'Site', '<p class="muted small">Loading…</p>');
+  rpc('fs_site_detail', { p_token: S.token, p_site_id: Number(siteId) }).then(function (d) {
+    var body = $('#modalBody'); if (!body) return;
+    var site = d.site || {}, stats = d.stats || {};
+    var html = '<p class="small">' +
+      '<span class="chip">' + esc(site.district) + '</span> ' +
+      '<span class="chip grey">' + esc(site.zone) + '</span>' +
+      (site.is_validation_site ? ' <span class="chip gold">validation site</span>' : '') +
+      (site.rc !== site.sub_area ? ' <span class="muted">' + esc(site.rc) + ' RC</span>' : '') + '</p>';
+    html += statLine([
+      ['Field Supervisor', (d.supervisors || []).map(function (x) {
+          return esc(x.name) + ' <span class="muted small">(' + x.visits_here + ' visits here · last active ' + fmtWhen(x.last_synced_at) + ')</span>';
+        }).join('<br>') || '<span class="muted">none assigned</span>'],
+      ['Visits', stats.visits],
+      ['Farmers engaged', (stats.farmers_engaged || 0) + ' / ' + (stats.farmers_total || 0)],
+      ['AI administered', stats.ai_visits],
+      ['Issues', stats.issues],
+      ['Soil samples', stats.samples],
+      ['Validation', site.is_validation_site
+        ? (stats.farms_complete || 0) + '/3 farms · ' + (stats.readings_done || 0) + '/' + (stats.readings_target || 0) + ' readings'
+        : null]
+    ]);
+    var fm = d.farmers || [];
+    html += '<h3 class="mt12">Farmers (' + fm.length + ')</h3>' +
+      '<p class="muted small">Tap a farmer for their profile and history.</p>' +
+      fm.slice(0, 8).map(function (f) {
+        return '<div class="queue-item act-row" data-farmerdetail="' + f.id + '">' +
+          '<div class="row spread"><b>' + esc(f.name) + '</b>' +
+          (Number(f.visits) ? '<span class="chip">' + f.visits + ' visit' + (Number(f.visits) === 1 ? '' : 's') +
+            (f.ai_ever ? ' · AI ✓' : '') + '</span>' : '<span class="chip grey">not yet visited</span>') + '</div>' +
+          (f.village ? '<div class="muted small">' + esc(f.village) + '</div>' : '') + '</div>';
+      }).join('') +
+      (fm.length > 8 ? '<button class="btn btn-outline btn-block btn-sm mt8" data-sitefarmers="' + site.id + '">All farmers (' + fm.length + ')</button>' : '');
+    var vs = d.visits || [];
+    html += '<h3 class="mt12">Recent visits (' + stats.visits + ')</h3>' +
+      (vs.length ? vs.slice(0, 5).map(actRowHTML).join('') : '<p class="muted small">No synced visits yet.</p>') +
+      (vs.length > 5 ? '<button class="btn btn-outline btn-block btn-sm mt8" data-sitevisits="' + esc(site.sub_area) + '">All visits</button>' : '');
+    body.innerHTML = html;
+    S._siteDetail = d;
+  }).catch(function (err) {
+    var body = $('#modalBody');
+    if (body && !handleAuthError(err)) body.innerHTML = '<p class="small" style="color:var(--danger)">' + esc(err.message) + '</p>';
+  });
+}
+function fsProfileModal(supId) {
+  if (!navigator.onLine) { toast('Connect to view team details'); return; }
+  showModal('Team member', '<p class="muted small">Loading…</p>');
+  rpc('fs_supervisor_detail', { p_token: S.token, p_supervisor_id: supId }).then(function (d) {
+    var body = $('#modalBody'); if (!body) return;
+    var t = d.supervisor || {}, st2 = d.stats || {};
+    var h2 = document.querySelector('.modal h2'); if (h2) h2.textContent = t.name || 'Team member';
+    var html = '<p class="small">' +
+      (t.role === 'supervisor' ? '<span class="chip">Field Supervisor</span>' :
+        '<span class="chip blue">' + esc(t.role) + '</span>') +
+      (t.active === false ? ' <span class="chip red">inactive</span>' : '') +
+      (t.station ? ' <span class="muted">' + esc(t.station) + '</span>' : '') + '</p>';
+    html += statLine([
+      ['Username', t.username ? esc(t.username) : null],
+      ['Phone', t.phone ? esc(t.phone) : null],
+      ['Visits', st2.visits + ' total · ' + st2.visits_7d + ' this week'],
+      ['AI administered', st2.ai_visits + ' of ' + st2.visits + ' visits'],
+      ['Farmers engaged', st2.farmers_engaged],
+      ['Farmers registered', st2.farmers_registered],
+      ['Issues reported', st2.issues],
+      ['Soil samples', st2.samples],
+      ['Last active', st2.last_synced_at ? fmtWhen(st2.last_synced_at) : 'never'],
+      ['Last GPS', st2.last_gps ? esc(st2.last_gps.site) + ' · ' + fmtWhen(st2.last_gps.at) : null]
+    ]);
+    var vs = d.visits || [];
+    html += '<h3 class="mt12">Recent visits</h3>' +
+      (vs.length ? vs.map(actRowHTML).join('') : '<p class="muted small">No synced visits yet.</p>');
+    body.innerHTML = html;
+  }).catch(function (err) {
+    var body = $('#modalBody');
+    if (body && !handleAuthError(err)) body.innerHTML = '<p class="small" style="color:var(--danger)">' + esc(err.message) + '</p>';
+  });
 }
 function siteVisitsModal(siteName) {
   function open(act) {
@@ -708,18 +812,26 @@ function statModal(key) {
       ? (staffDrill ? '<p class="muted small">Tap a site to see its visits.</p>' : '') +
         siteRows.map(function (x) {
           return '<div class="hbar-row' + (staffDrill ? ' act-row' : '') + '"' +
-            (staffDrill ? ' data-sitevisits="' + esc2(x.sub_area) + '"' : '') + '>' +
+            (staffDrill ? ' data-siteprofile="' + x.site_id + '"' : '') + '>' +
             '<span class="hbar-label" style="flex:1">' + esc2(x.sub_area) + '</span>' +
             '<span class="hbar-val">' + x.visits + ' visit' + (Number(x.visits) === 1 ? '' : 's') + (staffDrill ? ' ›' : '') + '</span></div>';
         }).join('')
       : '<p class="muted">No synced visits yet.</p>');
   } else if (key === 'farmers_engaged') {
-    showModal('Farmer engagement', '<p class="muted small">A farmer counts as engaged once at least one synced visit records them.</p>' +
-      miniTable(sites2.map(function (x) { return [esc2(x.sub_area), (x.farmers_engaged || 0) + ' / ' + (x.farmers_total || 0)]; })));
+    showModal('Farmer engagement', '<p class="muted small">A farmer counts as engaged once at least one synced visit records them. Tap a site for its full profile.</p>' +
+      sites2.map(function (x) {
+        return '<div class="hbar-row act-row" data-siteprofile="' + x.site_id + '">' +
+          '<span class="hbar-label" style="flex:1">' + esc2(x.sub_area) + '</span>' +
+          '<span class="hbar-val">' + (x.farmers_engaged || 0) + ' / ' + (x.farmers_total || 0) + ' ›</span></div>';
+      }).join(''));
   } else if (key === 'ai') {
     showModal('AI advisory administered', '<p class="muted small">Visits where the AI advisory was administered to the farmer. Field Supervisors only.</p>' +
-      miniTable((prog.supervisors || []).filter(function (x) { return x.role === 'supervisor'; })
-        .map(function (x) { return [esc2(x.name), (x.ai_visits || 0) + ' of ' + (x.visits || 0) + ' visits']; })));
+      (prog.supervisors || []).filter(function (x) { return x.role === 'supervisor'; })
+        .map(function (x) {
+          return '<div class="hbar-row act-row" data-fsprofile="' + x.id + '">' +
+            '<span class="hbar-label" style="flex:1">' + esc2(x.name) + '</span>' +
+            '<span class="hbar-val">' + (x.ai_visits || 0) + ' of ' + (x.visits || 0) + ' ›</span></div>';
+        }).join(''));
   } else if (key === 'issues') {
     var list = (act && act.visits ? act.visits.filter(function (v) { return v.issue; }).slice(0, 10) : []);
     showModal('Issues logged', list.length
@@ -751,11 +863,13 @@ function statModal(key) {
       '<p class="muted small">' + (key === 'fs_unstarted'
         ? 'Field Supervisors with no synced visits so far.'
         : 'No synced visits in the last 7 days.') + '</p>' +
-      miniTable(pick.map(function (sp) {
+      pick.map(function (sp) {
         var tm = team.find(function (m) { return m.id === sp.id; }) || {};
-        return [esc2(sp.name) + (tm.station ? ' <span class="muted small">· ' + esc2(tm.station) + '</span>' : ''),
-                sp.last_synced_at ? daysSince(sp.last_synced_at) + 'd ago' : '—'];
-      })));
+        return '<div class="hbar-row act-row" data-fsprofile="' + sp.id + '">' +
+          '<span class="hbar-label" style="flex:1">' + esc2(sp.name) +
+          (tm.station ? ' <span class="muted small">· ' + esc2(tm.station) + '</span>' : '') + '</span>' +
+          '<span class="hbar-val">' + (sp.last_synced_at ? daysSince(sp.last_synced_at) + 'd ago' : '—') + ' ›</span></div>';
+      }).join(''));
   } else if (key === 'flags') {
     var fl = ((S._act || {}).visits || []).filter(function (v) { return v.gps_flag || Number(v.out_of_range); }).slice(0, 10);
     showModal('Data-quality flags', fl.length
@@ -791,7 +905,7 @@ function siteRow(s, p, validation) {
   return (tappable
       ? '<a class="site-item" href="#/visit?site=' + s.id + '">'
       : (staffDrill
-          ? '<span class="site-item act-row" data-sitevisits="' + esc(s.sub_area) + '">'
+          ? '<span class="site-item act-row" data-siteprofile="' + s.id + '">'
           : '<span class="site-item" style="opacity:.75">')) +
     '<span class="site-dot" style="background:' + color + '"></span>' +
     '<span class="site-main"><span class="site-name">' + esc(s.sub_area) +
@@ -803,8 +917,8 @@ function siteRow(s, p, validation) {
 function bindSites() {
   $('#btnLogout').onclick = confirmLogout;
   $('#view').onclick = function (e) {
-    var sv = e.target.closest && e.target.closest('[data-sitevisits]');
-    if (sv) { siteVisitsModal(sv.getAttribute('data-sitevisits')); return; }
+    var sp = e.target.closest && e.target.closest('[data-siteprofile]');
+    if (sp) { siteProfileModal(sp.getAttribute('data-siteprofile')); return; }
     var k = e.target.closest && e.target.closest('[data-modal]');
     if (k) statModal(k.getAttribute('data-modal'));
   };
@@ -928,7 +1042,7 @@ function farmerVisitRow(v, localState) {
 }
 function farmerModal(fid) {
   var f = farmers().find(function (x) { return x.id === fid; });
-  if (!f) return;
+  if (!f) f = { id: fid, name: 'Farmer' };   // detail fetch below fills the rest
   var st = siteById(f.site_id);
   var rows = [
     ['Station', st ? st.sub_area + ' (' + st.rc + ' RC)' : ''],
@@ -951,6 +1065,8 @@ function farmerModal(fid) {
   showModal(f.name, html);
   if (!navigator.onLine) return;
   rpc('fs_farmer_detail', { p_token: S.token, p_farmer_id: fid }).then(function (d) {
+    var h2 = document.querySelector('.modal h2');
+    if (h2 && d.farmer && d.farmer.name) { h2.textContent = d.farmer.name; _mtitle = d.farmer.name; }
     var box = $('#farmerHistory'); if (!box) return;
     var localIds = {};
     localVisits.forEach(function (v) { localIds[v.id] = true; });
@@ -1090,6 +1206,10 @@ function viewMap() {
 }
 function bindMap() {
   $('#btnLogout').onclick = confirmLogout;
+  $('#view').onclick = function (e) {
+    var sp = e.target.closest && e.target.closest('[data-siteprofile]');
+    if (sp) { e.preventDefault(); siteProfileModal(sp.getAttribute('data-siteprofile')); }
+  };
   if (typeof L === 'undefined') {
     $('#map').innerHTML = '<div class="info-box" style="margin:12px">Map needs an internet connection the first time it loads.</div>';
     return;
@@ -1129,6 +1249,8 @@ function bindMap() {
       (s.is_validation_site ? '<br><b>Validation site</b> — ' + (p ? p.farms_complete : 0) + '/3 farms complete' : '') +
       (mine.indexOf(s.id) !== -1 ? '<br><b style="color:#5a8f1e">★ Your station</b>' : '') +
       (p && Number(p.visits) ? '<br>' + p.visits + ' visit(s), last ' + fmtWhen(p.last_visit_at) : '') +
+      ((S.me && S.me.role !== 'supervisor') || mine.indexOf(s.id) !== -1
+        ? '<br><a href="#" data-siteprofile="' + s.id + '">Site details</a>' : '') +
       (canVisit(s.id) ? '<br><a href="#/visit?site=' + s.id + '">Start visit here</a>' : ''));
     if (mine.indexOf(s.id) !== -1 && myPts.length === 1) m.openPopup();
   });
@@ -1624,7 +1746,7 @@ function chartVisitsByFS(prog) {
     '<span class="row" style="gap:6px"><span class="sw" style="background:#00a0dc"></span>Without AI</span></div>' +
     withData.map(function (x) {
       var ai = Number(x.ai_visits || 0), rest = Number(x.visits) - ai;
-      return '<div class="hbar-row" title="' + esc(x.name) + ': ' + x.visits + ' visits, ' + ai + ' with AI advisory">' +
+      return '<div class="hbar-row act-row" data-fsprofile="' + x.id + '" title="' + esc(x.name) + ': ' + x.visits + ' visits, ' + ai + ' with AI advisory">' +
         '<span class="hbar-label">' + esc((x.name || '').split(/\s+/)[0]) + '</span>' +
         '<span class="hbar-bars">' +
         (ai ? '<span class="hbar-seg" style="background:#006838;width:' + (ai / max * 100) + '%"></span>' : '') +
@@ -1636,12 +1758,12 @@ function chartVisitsByFS(prog) {
 function chartEngagement(prog) {
   var rows = (prog.sites || []).filter(function (x) { return Number(x.farmers_total); })
     .map(function (x) {
-      return { name: x.sub_area, e: Number(x.farmers_engaged || 0), t: Number(x.farmers_total),
+      return { id: x.site_id, name: x.sub_area, e: Number(x.farmers_engaged || 0), t: Number(x.farmers_total),
                pct: Number(x.farmers_engaged || 0) / Number(x.farmers_total) };
     }).sort(function (a, b) { return b.pct - a.pct || b.e - a.e; });
   if (!rows.length) return '<p class="muted small">No farmer data yet.</p>';
   return rows.map(function (x) {
-    return '<div class="hbar-row" title="' + esc(x.name) + ': ' + x.e + ' of ' + x.t + ' farmers engaged">' +
+    return '<div class="hbar-row act-row" data-siteprofile="' + x.id + '" title="' + esc(x.name) + ': ' + x.e + ' of ' + x.t + ' farmers engaged">' +
       '<span class="hbar-label">' + esc(x.name) + '</span>' +
       '<span class="hbar-track"><span class="hbar-seg" style="background:#006838;width:' + Math.min(100, Math.round(x.pct * 100)) + '%"></span></span>' +
       '<span class="hbar-val">' + x.e + '/' + x.t + '</span></div>';
@@ -1749,7 +1871,7 @@ function renderDash(prog, act) {
   };
   var fsRow = function (m) {
     return '<div class="team-item">' + avatarOf(m) +
-      '<span class="site-main"><span class="site-name">' + esc(m.name) +
+      '<span class="site-main act-row" data-fsprofile="' + m.id + '"><span class="site-name">' + esc(m.name) +
       (!m.active ? ' <span class="chip red">inactive</span>' : '') + '</span>' +
       '<span class="site-meta">' + esc(m.username || m.phone || '') +
       (m.station ? ' · ' + esc(m.station) : '') + ' · ' + m.visits + ' visits' +
@@ -1798,6 +1920,10 @@ function renderDash(prog, act) {
     }
     var vEl = e.target.closest && e.target.closest('[data-visit]');
     if (vEl) { visitDetailModal(vEl.getAttribute('data-visit')); return; }
+    var spEl = e.target.closest && e.target.closest('[data-siteprofile]');
+    if (spEl) { siteProfileModal(spEl.getAttribute('data-siteprofile')); return; }
+    var fpEl = e.target.closest && e.target.closest('[data-fsprofile]');
+    if (fpEl) { fsProfileModal(fpEl.getAttribute('data-fsprofile')); return; }
     var mk = e.target.closest && e.target.closest('[data-modal]');
     if (mk) { statModal(mk.getAttribute('data-modal')); return; }
     var pinId = e.target.getAttribute('data-pin');
