@@ -851,3 +851,12 @@ end $$;
 --     last GPS), last 20 visits. Staff only (or self).
 -- Applied as migrations fs_site_detail and fs_supervisor_detail.
 -- =============================================================================
+
+-- =============================================================================
+-- v13 (2026-08): per-photo ceiling raised from 1.5 MB to 5.6 MB of base64
+-- (~4 MB JPEG) in fs_submit_visit, per Field Supervisor feedback.
+-- Applied as migration fs_larger_photo_limit.
+-- NOTE ON ai_administered: the flag records WHICH ADVISORY was given —
+-- true = AI advisory, false = conventional advice (no AI). Both study groups
+-- advise farmers, so false must never gate or shorten the questionnaire.
+-- =============================================================================

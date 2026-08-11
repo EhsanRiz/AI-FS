@@ -25,7 +25,10 @@ var PARAMS = [
   { key: 'k',           label: 'K',         unit: 'mg/kg' }
 ];
 var GPS_FLAG_M = 500;
-var MAX_PHOTOS = 2;
+var MAX_PHOTOS = 3;
+var PHOTO_MAX_PX = 1600;      // long edge after downscale
+var PHOTO_QUALITY = 0.85;     // JPEG quality
+var PHOTO_MAX_B64 = 5400000;  // stay under the server's ~4 MB ceiling
 
 /* ----------------------------------------------------------------- state -- */
 var S = {
@@ -160,8 +163,8 @@ function visitDetailRows(v) {
     ['Site', esc(v.site || '') + (v.farm ? ' · ' + esc(v.farm) : '')],
     ['Farmer', v.farmer ? esc(v.farmer) : '<span class="muted">general visit</span>'],
     ['GPS', gps],
-    ['AI advisory', v.ai_administered === true ? '<b style="color:var(--ok)">✓ Yes</b>'
-                  : (v.ai_administered === false ? '✗ No' : '<span class="muted">not answered</span>')],
+    ['Advisory', v.ai_administered === true ? '<b style="color:var(--ok)">AI advisory</b>'
+                  : (v.ai_administered === false ? 'Conventional (no AI)' : '<span class="muted">not recorded</span>')],
     ['Issue', v.issue ? '<span style="color:var(--danger)">' + esc(v.issue) + '</span>' : null],
     ['Sample', v.sample_collected ? esc(v.sample_id || '✓ collected') : null],
     ['Notes', v.notes ? esc(v.notes) : null]
@@ -231,7 +234,7 @@ function actRowHTML(v) {
     '<span class="muted small">' + fmtWhen(v.synced_at) + '</span></div>' +
     '<div class="muted small">' +
     (v.farmer ? '👤 ' + esc(v.farmer) + ' · ' : '') +
-    (v.ai_administered === true ? 'AI ✓' : 'AI ✗') +
+    (v.ai_administered === true ? 'AI advisory' : (v.ai_administered === false ? 'conventional' : 'advisory not recorded')) +
     (v.readings_count ? ' · ' + v.readings_count + ' readings' : '') +
     (v.gps_lat == null ? ' · <span class="flag">no GPS</span>'
       : (v.gps_flag ? ' · <span class="flag">' + fmtDist(v.distance_from_site_m) + ' away ⚠</span>' : '')) +
@@ -264,7 +267,7 @@ function siteProfileModal(siteId) {
         }).join('<br>') || '<span class="muted">none assigned</span>'],
       ['Visits', stats.visits],
       ['Farmers engaged', (stats.farmers_engaged || 0) + ' / ' + (stats.farmers_total || 0)],
-      ['AI administered', stats.ai_visits],
+      ['AI advisory visits', (stats.ai_visits || 0) + ' of ' + (stats.visits || 0)],
       ['Issues', stats.issues],
       ['Soil samples', stats.samples],
       ['Validation', site.is_validation_site
@@ -278,7 +281,7 @@ function siteProfileModal(siteId) {
         return '<div class="queue-item act-row" data-farmerdetail="' + f.id + '">' +
           '<div class="row spread"><b>' + esc(f.name) + '</b>' +
           (Number(f.visits) ? '<span class="chip">' + f.visits + ' visit' + (Number(f.visits) === 1 ? '' : 's') +
-            (f.ai_ever ? ' · AI ✓' : '') + '</span>' : '<span class="chip grey">not yet visited</span>') + '</div>' +
+            (f.ai_ever ? ' · AI advisory' : '') + '</span>' : '<span class="chip grey">not yet visited</span>') + '</div>' +
           (f.village ? '<div class="muted small">' + esc(f.village) + '</div>' : '') + '</div>';
       }).join('') +
       (fm.length > 8 ? '<button class="btn btn-outline btn-block btn-sm mt8" data-sitefarmers="' + site.id + '">All farmers (' + fm.length + ')</button>' : '');
@@ -309,7 +312,7 @@ function fsProfileModal(supId) {
       ['Username', t.username ? esc(t.username) : null],
       ['Phone', t.phone ? esc(t.phone) : null],
       ['Visits', st2.visits + ' total · ' + st2.visits_7d + ' this week'],
-      ['AI administered', st2.ai_visits + ' of ' + st2.visits + ' visits'],
+      ['AI advisory visits', st2.ai_visits + ' of ' + st2.visits + ' visits'],
       ['Farmers engaged', st2.farmers_engaged],
       ['Farmers registered', st2.farmers_registered],
       ['Issues reported', st2.issues],
@@ -1032,7 +1035,7 @@ function farmerVisitRow(v, localState) {
     (localState ? '<span class="chip state-' + localState + '">' + localState + '</span>'
                 : (v.supervisor ? '<span class="chip grey">' + esc(v.supervisor) + '</span>' : '')) + '</div>' +
     '<div class="muted small">' +
-    (v.ai_administered === true ? 'AI ✓' : (v.ai_administered === false ? 'AI ✗' : '')) +
+    (v.ai_administered === true ? 'AI advisory' : (v.ai_administered === false ? 'conventional' : '')) +
     (Number(v.readings_count) || (v.readings || []).length ? ' · ' + (v.readings_count || v.readings.length) + ' readings' : ' · no soil data') +
     (v.sample_collected ? ' · sample ' + esc(v.sample_id || '✓') : '') +
     '</div>' +
@@ -1349,12 +1352,13 @@ function viewVisit(route) {
     '<span class="gps-status" id="gpsStatus">' + gpsStatusHTML() + '</span></div></div>';
   html += '</div>';
 
-  // visit activity: AI advisory + issues (AI must be answered explicitly)
+  // visit activity: which kind of advisory was given (both groups advise farmers)
   html += '<div class="card"><h2>Visit activity</h2>' +
-    '<div class="field"><label>AI advisory administered this visit? <span style="color:var(--danger)">*</span></label>' +
+    '<div class="field"><label>Advisory given this visit <span style="color:var(--danger)">*</span></label>' +
+    '<p class="muted small" style="margin:-2px 0 6px">Advice is given to every farmer — record which type. Either answer keeps the rest of the form open.</p>' +
     '<div class="farm-chips">' +
-    '<button type="button" class="farm-chip' + (form.ai_administered === true ? ' sel' : '') + '" data-ai="1">Yes</button>' +
-    '<button type="button" class="farm-chip' + (form.ai_administered === false ? ' sel' : '') + '" data-ai="0">No</button>' +
+    '<button type="button" class="farm-chip' + (form.ai_administered === true ? ' sel' : '') + '" data-ai="1">AI advisory</button>' +
+    '<button type="button" class="farm-chip' + (form.ai_administered === false ? ' sel' : '') + '" data-ai="0">Conventional (no AI)</button>' +
     '</div></div>' +
     '<div class="field mt8"><label>Specific issue observed (optional)</label>' +
     '<textarea id="fIssue" placeholder="e.g. pest outbreak, sensor fault, farmer unavailable…">' + esc(form.issue || '') + '</textarea></div>' +
@@ -1391,6 +1395,7 @@ function viewVisit(route) {
   html += '<div class="card"><h2>Photos & notes</h2>' +
     '<p class="muted small">At least one photo is required. Notes are optional.</p>' +
     '<div class="photo-strip" id="photoStrip">' + photoStripHTML() + '</div>' +
+    '<input type="file" id="fPhotoCam" accept="image/*" capture="environment" style="display:none">' +
     '<input type="file" id="fPhoto" accept="image/*" style="display:none">' +
     '<div class="field mt12"><label>Notes (optional)</label>' +
     '<textarea id="fNotes" placeholder="Field conditions, issues…">' + esc(form.notes) + '</textarea></div>' +
@@ -1406,7 +1411,7 @@ function visitReqs(rec) {
   return [
     ['Site selected', !!rec.site_id],
     ['GPS location captured', !!rec.gps],
-    ['AI advisory question answered', rec.ai_administered === true || rec.ai_administered === false],
+    ['Advisory type selected', rec.ai_administered === true || rec.ai_administered === false],
     ['At least one photo added', (rec.photos || []).length > 0]
   ];
 }
@@ -1447,7 +1452,10 @@ function photoStripHTML() {
     return '<span class="photo-thumb"><img src="data:' + p.mime + ';base64,' + p.data_base64 + '" alt="photo">' +
       '<button type="button" data-rmphoto="' + i + '">×</button></span>';
   }).join('');
-  if ((form.photos || []).length < MAX_PHOTOS) html += '<label for="fPhoto" class="photo-add" role="button" id="btnAddPhoto">📷<span style="font-size:11px;font-weight:700">Add</span></label>';
+  if ((form.photos || []).length < MAX_PHOTOS) {
+    html += '<label for="fPhotoCam" class="photo-add" role="button" id="btnCamera">📷<span style="font-size:11px;font-weight:700">Camera</span></label>' +
+      '<label for="fPhoto" class="photo-add" role="button" id="btnGallery">🖼<span style="font-size:11px;font-weight:700">Gallery</span></label>';
+  }
   return html;
 }
 function bindVisit() {
@@ -1525,11 +1533,13 @@ function bindVisit() {
   });
 
   var photoInput = $('#fPhoto');
+  var camInput = $('#fPhotoCam');
   // onclick property (not addEventListener): rerenderVisit keeps the same #view
   // element, so a listener would stack up on every partial re-render.
   $('#view').onclick = function (e) {
-    // the label opens the picker natively; this is only a backstop
-    if (e.target.closest && e.target.closest('#btnAddPhoto')) { try { photoInput.click(); } catch (err) {} }
+    // the labels open the pickers natively; these are only backstops
+    if (e.target.closest && e.target.closest('#btnGallery')) { try { photoInput.click(); } catch (err) {} }
+    else if (e.target.closest && e.target.closest('#btnCamera')) { try { camInput.click(); } catch (err) {} }
     var rm = e.target.getAttribute('data-rmphoto');
     if (rm != null) {
       form.photos.splice(Number(rm), 1);
@@ -1537,16 +1547,20 @@ function bindVisit() {
       updateReqs();
     }
   };
-  photoInput.addEventListener('change', function () {
+  function acceptPhoto() {
     var file = this.files && this.files[0];
     this.value = '';
     if (!file) return;
+    toast('Adding photo…');
     downscalePhoto(file).then(function (p) {
       form.photos.push(p);
       $('#photoStrip').innerHTML = photoStripHTML();
       updateReqs();
+      toast('Photo added');
     }).catch(function () { toast('Could not read that photo'); });
-  });
+  }
+  photoInput.addEventListener('change', acceptPhoto);
+  camInput.addEventListener('change', acceptPhoto);
 
   $('#btnSave').addEventListener('click', function () { saveVisit(true); });
   $('#btnDraft').addEventListener('click', function () { saveVisit(false); });
@@ -1633,15 +1647,21 @@ function downscalePhoto(file) {
     var url = URL.createObjectURL(file);
     img.onload = function () {
       try {
-        var max = 1280;
-        var scale = Math.min(1, max / Math.max(img.width, img.height));
-        var canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        var dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+        // keep detail (1600px / q0.85); step down only if the result would
+        // exceed what the server accepts, so big camera photos still go through
+        var px = PHOTO_MAX_PX, q = PHOTO_QUALITY, b64;
+        for (var attempt = 0; attempt < 4; attempt++) {
+          var scale = Math.min(1, px / Math.max(img.width, img.height));
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          b64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
+          if (b64.length <= PHOTO_MAX_B64) break;
+          px = Math.round(px * 0.8); q = Math.max(0.6, q - 0.08);
+        }
         URL.revokeObjectURL(url);
-        resolve({ id: uuid(), mime: 'image/jpeg', data_base64: dataUrl.split(',')[1] });
+        resolve({ id: uuid(), mime: 'image/jpeg', data_base64: b64 });
       } catch (e) { reject(e); }
     };
     img.onerror = reject;
@@ -1668,7 +1688,7 @@ function viewQueue() {
         '<span class="chip state-' + r.state + '">' + r.state + '</span></div>' +
         '<div class="muted small">' + fmtWhen(r.submitted_at || r.updated_at) +
         (fm ? ' · ' + esc(fm) : '') +
-        (r.ai_administered === true ? ' · AI ✓' : (r.ai_administered === false ? ' · AI ✗' : '')) +
+        (r.ai_administered === true ? ' · AI advisory' : (r.ai_administered === false ? ' · conventional' : '')) +
         (r.issue ? ' · issue noted' : '') +
         ' · ' + readingsN + ' readings' +
         (r.sample_collected ? ' · sample ' + esc(r.sample_id || '') : '') +
@@ -1743,7 +1763,7 @@ function chartVisitsByFS(prog) {
   var max = Math.max.apply(null, withData.map(function (x) { return x.visits; }));
   return '<div class="chart-legend">' +
     '<span class="row" style="gap:6px"><span class="sw" style="background:#006838"></span>AI administered</span>' +
-    '<span class="row" style="gap:6px"><span class="sw" style="background:#00a0dc"></span>Without AI</span></div>' +
+    '<span class="row" style="gap:6px"><span class="sw" style="background:#00a0dc"></span>Conventional</span></div>' +
     withData.map(function (x) {
       var ai = Number(x.ai_visits || 0), rest = Number(x.visits) - ai;
       return '<div class="hbar-row act-row" data-fsprofile="' + x.id + '" title="' + esc(x.name) + ': ' + x.visits + ' visits, ' + ai + ' with AI advisory">' +

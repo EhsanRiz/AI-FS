@@ -54,7 +54,7 @@ as a PWA from the browser menu on phones.
 | Sites | all | Validation-site targets + progress, all 18 sub-areas, start a visit |
 | Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register/edit farmers (offline-capable), tap a farmer for a detail card with full profile + visit history (synced + local), jump to a visit |
 | Map | all | Leaflet map (vendored locally — no CDN), district colours, validation sites ringed gold; FS view zooms to their own station with a lime halo and ★ marker popup |
-| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → AI advisory administered Yes/No (**required**) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
+| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → advisory type — AI advisory or Conventional (**required**, form continues either way) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos via 📷 Camera or 🖼 Gallery, up to 3 (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
 | Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
 
@@ -98,7 +98,8 @@ serving the old cached copy.
 ## Not in v1 (deliberate)
 
 - Sesotho UI (English only for now; structure allows adding a string table later).
-- Photos live in a `fs_photos` table as downscaled base64 (~100–200 KB each, capped at 2/visit);
+- Photos live in a `fs_photos` table as base64, downscaled on-device to 1600 px / q0.85
+  (~0.3–1 MB each, up to 3/visit; server ceiling ~4 MB with automatic step-down);
   move to Supabase Storage if volume grows.
 - Accuracy statistics (R², RMSE, MAE, bias) are computed later from the paired sensor/lab data —
   the schema stores everything needed (`sample_id` links sensor readings to lab results).
