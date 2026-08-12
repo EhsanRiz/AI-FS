@@ -88,7 +88,7 @@ create table if not exists fs_photos (
   id          uuid primary key,
   visit_id    uuid not null references fs_visits(id) on delete cascade,
   mime        text not null default 'image/jpeg',
-  data_base64 text not null,             -- client downscales to <=1280px JPEG
+  data_base64 text not null,             -- client downscales to <=1600px JPEG
   created_at  timestamptz not null default now()
 );
 
@@ -281,8 +281,8 @@ begin
 
   delete from fs_photos where visit_id = v_id;
   for r in select * from jsonb_array_elements(coalesce(p_photos, '[]'::jsonb)) loop
-    if length(r->>'data_base64') > 1500000 then
-      raise exception 'Photo too large';
+    if length(r->>'data_base64') > 5600000 then
+      raise exception 'Photo too large (max about 4 MB)';
     end if;
     insert into fs_photos (id, visit_id, mime, data_base64)
     values ((r->>'id')::uuid, v_id, coalesce(r->>'mime','image/jpeg'), r->>'data_base64');

@@ -1295,10 +1295,18 @@ function viewVisit(route) {
     var rec = S.queue.find(function (r) { return r.id === q.edit; });
     form = rec ? JSON.parse(JSON.stringify(rec)) : blankVisit(null);
   } else if (!form || form._done || q.site) {
-    var pre = q.site ? Number(q.site) : defaultSiteId();
-    if (pre && !canVisit(pre)) pre = defaultSiteId();
-    form = blankVisit(pre);
-    if (q.farmer && pre) form.farmer_id = q.farmer;
+    // no form in memory and no explicit target = we may have been reloaded
+    // mid-capture; resume the autosaved visit rather than starting over
+    var resume = (!form && !q.site) ? resumableDraft() : null;
+    if (resume) {
+      form = JSON.parse(JSON.stringify(resume));
+      setTimeout(function () { toast('Resumed your unsaved visit'); }, 400);
+    } else {
+      var pre = q.site ? Number(q.site) : defaultSiteId();
+      if (pre && !canVisit(pre)) pre = defaultSiteId();
+      form = blankVisit(pre);
+      if (q.farmer && pre) form.farmer_id = q.farmer;
+    }
   }
   var site = form.site_id ? siteById(form.site_id) : null;
   var fList = form.site_id ? farmsOf(form.site_id) : [];
@@ -1395,7 +1403,9 @@ function viewVisit(route) {
   html += '<div class="card"><h2>Photos & notes</h2>' +
     '<p class="muted small">At least one photo is required. Notes are optional.</p>' +
     '<div class="photo-strip" id="photoStrip">' + photoStripHTML() + '</div>' +
-    '<input type="file" id="fPhotoCam" accept="image/*" capture="environment" style="display:none">' +
+    // no capture="environment": the forced camera intent is broken on several
+    // Android builds (see v13). The phone's own chooser offers Camera first and
+    // still leaves Gallery available if a device's camera misbehaves.
     '<input type="file" id="fPhoto" accept="image/*" style="display:none">' +
     '<div class="field mt12"><label>Notes (optional)</label>' +
     '<textarea id="fNotes" placeholder="Field conditions, issues…">' + esc(form.notes) + '</textarea></div>' +
@@ -1453,8 +1463,8 @@ function photoStripHTML() {
       '<button type="button" data-rmphoto="' + i + '">×</button></span>';
   }).join('');
   if ((form.photos || []).length < MAX_PHOTOS) {
-    html += '<label for="fPhotoCam" class="photo-add" role="button" id="btnCamera">📷<span style="font-size:11px;font-weight:700">Camera</span></label>' +
-      '<label for="fPhoto" class="photo-add" role="button" id="btnGallery">🖼<span style="font-size:11px;font-weight:700">Gallery</span></label>';
+    html += '<label for="fPhoto" class="photo-add" role="button" id="btnAddPhoto">📷' +
+      '<span style="font-size:11px;font-weight:700">Add photo</span></label>';
   }
   return html;
 }
@@ -1533,21 +1543,24 @@ function bindVisit() {
   });
 
   var photoInput = $('#fPhoto');
-  var camInput = $('#fPhotoCam');
   // onclick property (not addEventListener): rerenderVisit keeps the same #view
   // element, so a listener would stack up on every partial re-render.
   $('#view').onclick = function (e) {
-    // the labels open the pickers natively; these are only backstops
-    if (e.target.closest && e.target.closest('#btnGallery')) { try { photoInput.click(); } catch (err) {} }
-    else if (e.target.closest && e.target.closest('#btnCamera')) { try { camInput.click(); } catch (err) {} }
+    // #btnAddPhoto is a <label for="fPhoto">: the OS opens the picker itself.
+    // Never call photoInput.click() from here as well — one tap would then
+    // activate the input twice and the second activation cancels the first,
+    // which is how the camera stopped returning photos in v16. Only save the
+    // form first, in case the picker pushes us into the background.
+    if (e.target.closest && e.target.closest('#btnAddPhoto')) autosaveForm();
     var rm = e.target.getAttribute('data-rmphoto');
     if (rm != null) {
       form.photos.splice(Number(rm), 1);
       $('#photoStrip').innerHTML = photoStripHTML();
       updateReqs();
+      autosaveForm();
     }
   };
-  function acceptPhoto() {
+  photoInput.addEventListener('change', function () {
     var file = this.files && this.files[0];
     this.value = '';
     if (!file) return;
@@ -1556,11 +1569,12 @@ function bindVisit() {
       form.photos.push(p);
       $('#photoStrip').innerHTML = photoStripHTML();
       updateReqs();
+      autosaveForm();
       toast('Photo added');
-    }).catch(function () { toast('Could not read that photo'); });
-  }
-  photoInput.addEventListener('change', acceptPhoto);
-  camInput.addEventListener('change', acceptPhoto);
+    }).catch(function (err) {
+      toast('Could not add that photo — ' + ((err && err.message) || 'unknown error'));
+    });
+  });
 
   $('#btnSave').addEventListener('click', function () { saveVisit(true); });
   $('#btnDraft').addEventListener('click', function () { saveVisit(false); });
@@ -1590,6 +1604,26 @@ function registerFarmer(data, done) {
 function rerenderVisit() {
   var v = $('#view');
   if (v) { v.innerHTML = viewVisit(location.hash.replace(/^#/, '').split('?')[0]); bindVisit(); }
+}
+// The visit form lives in memory only until the FS taps Save. Opening the photo
+// picker (or any app switch) can put the browser in the background long enough
+// for a low-memory phone to discard the page, which used to lose the whole
+// visit. Persist it as a draft at those moments and pick it up again on the way
+// back, so an interrupted capture costs nothing.
+function autosaveForm() {
+  if ((location.hash || '').indexOf('#/visit') !== 0) return Promise.resolve();
+  if (!form || form._done || !form.site_id) return Promise.resolve();
+  captureFormText();
+  form._resume = true;
+  form.updated_at = new Date().toISOString();
+  var rec = JSON.parse(JSON.stringify(form));
+  return idb.put('visits', rec).then(loadQueue).catch(function () {});
+}
+function resumableDraft() {
+  // S.queue is sorted newest-first, so the first hit is the latest interruption
+  return (S.queue || []).filter(function (r) {
+    return r._resume && r.state === 'draft';
+  })[0] || null;
 }
 function captureFormText() {
   if (!$('#fNotes')) return;
@@ -1632,6 +1666,7 @@ function saveVisit(queueIt) {
   form.updated_at = new Date().toISOString();
   form.state = queueIt ? 'queued' : 'draft';
   form.error = null;
+  form._resume = false;   // an explicit save supersedes any autosave
   var rec = JSON.parse(JSON.stringify(form));
   idb.put('visits', rec).then(function () {
     form._done = true;
@@ -1657,14 +1692,21 @@ function downscalePhoto(file) {
           canvas.height = Math.round(img.height * scale);
           canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
           b64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
-          if (b64.length <= PHOTO_MAX_B64) break;
+          if (b64 && b64.length <= PHOTO_MAX_B64) break;
           px = Math.round(px * 0.8); q = Math.max(0.6, q - 0.08);
         }
         URL.revokeObjectURL(url);
+        // a phone that runs out of memory mid-encode hands back an empty canvas
+        if (!b64 || b64.length < 1000) throw new Error('the phone ran out of memory encoding it');
+        if (b64.length > PHOTO_MAX_B64) throw new Error('it is too large even after shrinking');
         resolve({ id: uuid(), mime: 'image/jpeg', data_base64: b64 });
       } catch (e) { reject(e); }
     };
-    img.onerror = reject;
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error('this phone could not open the image (' +
+        (file.type || 'unknown format') + ', ' + Math.round((file.size || 0) / 1024) + ' KB)'));
+    };
     img.src = url;
   });
 }
@@ -1979,7 +2021,9 @@ window.addEventListener('online', function () {
 });
 window.addEventListener('offline', updateNetDot);
 document.addEventListener('visibilitychange', function () {
-  if (!document.hidden && S.token) syncAll();
+  // going away (camera app, call, home button): save before the OS can reclaim us
+  if (document.hidden) { autosaveForm(); return; }
+  if (S.token) syncAll();
 });
 
 loadQueue().catch(function () {}).then(function () {
