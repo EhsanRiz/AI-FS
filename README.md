@@ -8,7 +8,9 @@ new farmers in their area, and — when applicable — capture soil-sensor valid
 (3 farms per validation site × 3 readings × 5 parameters + 0–20 cm topsoil samples).
 339 profiled farmers across the 18 sub-areas are pre-loaded from the AI Farm Data workbook.
 
-**No build step.** Plain HTML/JS/CSS served statically from the repo root.
+**No build step.** Plain HTML/JS/CSS served statically from the repo root. (`npm test` runs
+the Playwright e2e suite — dev-only tooling, kept off the edge by `.assetsignore`; see
+[TESTING.md](TESTING.md).)
 
 ## Hosting
 
