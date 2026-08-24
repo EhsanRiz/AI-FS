@@ -32,7 +32,7 @@ var PHOTO_QUALITY = 0.85;     // starting JPEG quality
 // (the browser reports that as "Failed to fetch"), so quality is stepped down
 // until the photo fits the budget — full-resolution camera photos still work,
 // they just travel smaller.
-var PHOTO_TARGET_B64 = 800000;  // ~600 KB image
+var PHOTO_TARGET_B64 = 400000;  // ~300 KB image — measured to clear a 150 kbps uplink
 var PHOTO_MAX_B64 = 5400000;    // server ceiling (5.6 MB live); hard backstop
 
 /* ----------------------------------------------------------------- state -- */
@@ -546,6 +546,11 @@ function syncAll(manual) {
         return shrinkStoredPhotos(rec);
       }).then(function (rec2) {
         rec = rec2 || rec;
+        // Give a big payload proportionally longer: a fixed window either cuts
+        // off a slow upload that was still progressing, or hangs on a dead one.
+        var payloadB = (rec.photos || []).reduce(function (t, p) {
+          return t + ((p.data_base64 || '').length); }, 0);
+        var uploadMs = Math.min(180000, 30000 + Math.round(payloadB / 1048576 * 100000));
         return rpc('fs_submit_visit', {
           p_token: S.token,
           p_visit: {
@@ -563,7 +568,7 @@ function syncAll(manual) {
           p_photos: (rec.photos || []).map(function (p) {
             return { id: p.id, mime: p.mime, data_base64: p.data_base64 };
           })
-        }, { timeoutMs: 90000, tries: 3 }).then(function (res) {
+        }, { timeoutMs: uploadMs, tries: 3 }).then(function (res) {
           rec.state = 'synced';
           rec.error = null;
           rec.server_distance_m = res && res.distance_from_site_m != null ? Number(res.distance_from_site_m) : null;
