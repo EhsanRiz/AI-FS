@@ -6,7 +6,8 @@ with University of Virginia & National University of Lesotho). Field Supervisors
 visits (who they saw, whether the AI advisory was administered, any issues observed), register
 new farmers in their area, and — when applicable — capture soil-sensor validation data
 (3 farms per validation site × 3 readings × 5 parameters + 0–20 cm topsoil samples).
-339 profiled farmers across the 18 sub-areas are pre-loaded from the AI Farm Data workbook.
+344 profiled farmers across the 18 sub-areas are pre-loaded from the AI Farm Data workbook
+(FINAL VERSION, August 2026 — see `supabase/2026-08_farmer_list_update.sql`).
 
 **No build step.** Plain HTML/JS/CSS served statically from the repo root. (`npm test` runs
 the Playwright e2e suite — dev-only tooling, kept off the edge by `.assetsignore`; see
