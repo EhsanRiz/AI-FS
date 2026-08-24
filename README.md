@@ -28,11 +28,14 @@ as a PWA from the browser menu on phones.
 - **Offline:** `sw.js` precaches the app shell (opens with no signal in the field); visits are
   stored in **IndexedDB** with states `draft → queued → synced/failed` and sync automatically
   when connectivity returns (online event / app focus / manual "Sync now").
-- **Backend:** Supabase project **4D-roster** (`kgoprnbxdzwehzkxedch`), repurposed as the AI-FS
-  database. All objects are `fs_`-prefixed and isolated: tables are deny-all RLS; the only
+- **Backend:** Supabase project **AI-FS** (`kwhnpzhckjdlzawvvhvt`). (The previous project,
+  4D-roster, was deleted in Aug 2026; the database was rebuilt — see
+  [supabase/REBUILD.md](supabase/REBUILD.md).) All objects are `fs_`-prefixed and isolated: tables are deny-all RLS; the only
   access path is the `SECURITY DEFINER` RPCs in `supabase/schema.sql`
-  (`fs_login`, `fs_bootstrap`, `fs_submit_visit`, `fs_progress`, `fs_activity`,
-  `fs_add_supervisor`, `fs_set_supervisor`).
+  and `supabase/schema_v4_v9.sql` (`fs_login`, `fs_bootstrap`, `fs_submit_visit`,
+  `fs_progress`, `fs_activity`, `fs_register_farmer`, `fs_farmer_detail`, `fs_site_detail`,
+  `fs_supervisor_detail`, `fs_visit_detail`, `fs_add_supervisor`, `fs_set_supervisor`).
+  **Every schema change must be committed here — never applied only in the dashboard.**
 - **Auth:** first-name username (or phone) + PIN — one login field takes either. `fs_login`
   returns a 60-day bearer token (sha256-hashed at rest; bcrypt PINs; 8 failed attempts →
   15-min lockout). Roles: `supervisor` (the ONLY role that records visits and registers

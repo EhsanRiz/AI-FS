@@ -6,8 +6,10 @@
 'use strict';
 
 /* ---------------------------------------------------------------- config -- */
-var SUPABASE_URL = 'https://kgoprnbxdzwehzkxedch.supabase.co';
-var SUPABASE_ANON_KEY = 'sb_publishable_ndQHws_XSRFhq7uSr2cYmw_HhuMXC-c';
+// Project AI-FS. (The previous project, 4D-roster, was deleted in Aug 2026 and
+// the database was rebuilt here — see supabase/REBUILD.md.)
+var SUPABASE_URL = 'https://kwhnpzhckjdlzawvvhvt.supabase.co';
+var SUPABASE_ANON_KEY = 'sb_publishable_3x-mNMJwm-l6IDHTIu2plg_l1vVcGOj';
 
 var DISTRICT_COLORS = {
   'Maseru': '#2563eb', 'Berea': '#9333ea', 'Leribe': '#16a34a',
@@ -504,6 +506,26 @@ function pendingCount() {
   return S.queue.filter(function (r) { return r.state === 'queued' || r.state === 'failed'; }).length;
 }
 
+/* The Aug-2026 rebuild gave every profiled farmer a new uuid, so a visit still
+   queued on a phone points at an id the server no longer knows. The farmer's
+   NAME is still resolvable here — from the boot cache this phone is already
+   holding — but only until the next sign-in replaces it. Stamp it onto the
+   queued records while we still can; fs_submit_visit re-links by name. */
+function stampQueuedFarmerNames() {
+  var known = (S.boot && S.boot.farmers) || [];
+  if (!known.length) return Promise.resolve();
+  var byId = {};
+  known.forEach(function (f) { byId[f.id] = f.name; });
+  var todo = S.queue.filter(function (r) {
+    return r.farmer_id && !r.farmer_name && byId[r.farmer_id];
+  });
+  if (!todo.length) return Promise.resolve();
+  return Promise.all(todo.map(function (r) {
+    r.farmer_name = byId[r.farmer_id];
+    return idb.put('visits', r);
+  })).catch(function () {});
+}
+
 /* ------------------------------------------------------------------ sync -- */
 function syncAll(manual) {
   if (S.syncing || !S.token) return Promise.resolve();
@@ -556,6 +578,7 @@ function syncAll(manual) {
           p_visit: {
             id: rec.id, site_id: rec.site_id, farm_id: rec.farm_id || null,
             farmer_id: rec.farmer_id || null,
+            farmer_name: rec.farmer_name || null,
             ai_administered: rec.ai_administered,
             issue: rec.issue || null,
             gps_lat: rec.gps ? rec.gps.lat : null, gps_lon: rec.gps ? rec.gps.lon : null,
@@ -623,6 +646,7 @@ function refreshBoot() {
 
 /* ------------------------------------------------------------------ auth -- */
 function doLogout(expired) {
+  stampQueuedFarmerNames();          // before the cache that resolves them goes
   localStorage.removeItem('fsm_token');
   localStorage.removeItem('fsm_me');
   localStorage.removeItem('fsm_boot');
@@ -2144,7 +2168,7 @@ document.addEventListener('visibilitychange', function () {
   if (S.token) syncAll();
 });
 
-loadQueue().catch(function () {}).then(function () {
+loadQueue().catch(function () {}).then(stampQueuedFarmerNames).then(function () {
   if (!location.hash) location.hash = S.token ? '#/home' : '#/login';
   render();
   if (S.token) {
