@@ -204,7 +204,11 @@ function visitDetailModal(id) {
   var local = S.queue.find(function (r) { return r.id === id; });
   if (local) {
     var st = siteById(local.site_id) || {};
-    var fm = local.farmer_id ? (farmers().find(function (x) { return x.id === local.farmer_id; }) || {}).name : null;
+    // fall back to the stamped name: after the Aug-2026 rebuild a queued
+    // visit's farmer_id no longer resolves against the refreshed farmer list
+    var fm = local.farmer_id
+      ? ((farmers().find(function (x) { return x.id === local.farmer_id; }) || {}).name || local.farmer_name || null)
+      : null;
     var farmLabel = (farms().find(function (x) { return x.id === local.farm_id; }) || {}).label;
     showModal('Visit details',
       '<p class="small"><span class="chip state-' + local.state + '">' + local.state + '</span>' +
@@ -1856,7 +1860,9 @@ function viewQueue() {
     html += '<div class="card mt12">' + S.queue.map(function (r) {
       var s = siteById(r.site_id);
       var f = (farms().find(function (x) { return x.id === r.farm_id; }) || {}).label;
-      var fm = r.farmer_id ? (farmers().find(function (x) { return x.id === r.farmer_id; }) || {}).name : null;
+      var fm = r.farmer_id
+        ? ((farmers().find(function (x) { return x.id === r.farmer_id; }) || {}).name || r.farmer_name || null)
+        : null;
       var readingsN = (r.readings || []).length;
       return '<div class="queue-item">' +
         '<div class="row spread"><b>' + esc(s ? s.sub_area : 'Site ' + r.site_id) + (f ? ' · ' + esc(f) : '') + '</b>' +
