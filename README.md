@@ -98,8 +98,10 @@ serving the old cached copy.
 ## Not in v1 (deliberate)
 
 - Sesotho UI (English only for now; structure allows adding a string table later).
-- Photos live in a `fs_photos` table as base64, downscaled on-device to 1600 px / q0.85
-  (~0.3–1 MB each, up to 3/visit; server ceiling ~4 MB with automatic step-down);
-  move to Supabase Storage if volume grows.
+- Photos live in a `fs_photos` table as base64. Any camera photo is accepted, but it is
+  compressed on-device to a **byte budget** (~370 KB base64, 1280 px, quality stepped down
+  until it fits) because multi-MB uploads on rural LTE were aborting mid-flight and surfacing
+  as "Failed to fetch". Up to 3 per visit. Next structural step (needs DB access): upload
+  photos one at a time via a dedicated RPC so the visit record syncs independently of them.
 - Accuracy statistics (R², RMSE, MAE, bias) are computed later from the paired sensor/lab data —
   the schema stores everything needed (`sample_id` links sensor readings to lab results).

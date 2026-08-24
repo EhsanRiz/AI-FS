@@ -26,9 +26,13 @@ var PARAMS = [
 ];
 var GPS_FLAG_M = 500;
 var MAX_PHOTOS = 3;
-var PHOTO_MAX_PX = 1600;      // long edge after downscale
-var PHOTO_QUALITY = 0.85;     // JPEG quality
-var PHOTO_MAX_B64 = 5400000;  // stay under the server's ~4 MB ceiling
+// Field phones upload over weak rural LTE. Any camera photo is accepted, but it
+// is shrunk on-device to a byte budget so the POST actually completes — a 2 MB
+// upload on a weak link is what was producing "Failed to fetch".
+var PHOTO_MAX_PX = 1280;      // long edge after downscale
+var PHOTO_QUALITY = 0.8;      // starting JPEG quality
+var PHOTO_TARGET_B64 = 420000;  // ~315 KB per photo — the upload budget
+var PHOTO_HARD_B64 = 900000;    // never send more than this
 
 /* ----------------------------------------------------------------- state -- */
 var S = {
@@ -384,8 +388,12 @@ function haversineM(lat1, lon1, lat2, lon2) {
 }
 
 /* ------------------------------------------------------------------- api -- */
-function rpc(fn, args) {
-  return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+// One attempt, with a hard timeout — a stalled upload on a weak link must fail
+// fast enough to be retried rather than hanging until the browser kills it.
+function rpcOnce(fn, args, timeoutMs) {
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
+  var opts = {
     method: 'POST',
     headers: {
       'apikey': SUPABASE_ANON_KEY,
@@ -393,7 +401,10 @@ function rpc(fn, args) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(args || {})
-  }).then(function (res) {
+  };
+  if (ctrl) opts.signal = ctrl.signal;
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, opts).then(function (res) {
+    if (timer) clearTimeout(timer);
     if (res.ok) return res.status === 204 ? null : res.json();
     return res.json().catch(function () { return {}; }).then(function (body) {
       var msg = (body && body.message) || ('Request failed (' + res.status + ')');
@@ -401,9 +412,32 @@ function rpc(fn, args) {
       err.status = res.status;
       err.isAuth = res.status === 403 && (msg === 'AUTH' || /session|token/i.test(msg));
       if (msg === 'AUTH') err.message = 'Session expired — please sign in again.';
+      // server/gateway hiccups are worth retrying; business rules are not
+      err.retryable = res.status >= 500 || res.status === 429 || res.status === 408;
       throw err;
     });
+  }, function () {
+    if (timer) clearTimeout(timer);
+    var err = new Error('Connection lost while sending — will retry automatically');
+    err.retryable = true;
+    err.network = true;
+    throw err;
   });
+}
+// All our write RPCs are idempotent (client-generated ids, upserts), so retrying
+// is always safe.
+function rpc(fn, args, opts) {
+  opts = opts || {};
+  var tries = opts.tries || 3;
+  var timeoutMs = opts.timeoutMs || 25000;
+  function attempt(n) {
+    return rpcOnce(fn, args, timeoutMs).catch(function (err) {
+      if (!err.retryable || n >= tries || !navigator.onLine) throw err;
+      return new Promise(function (go) { setTimeout(go, Math.min(8000, 1500 * Math.pow(2, n - 1))); })
+        .then(function () { return attempt(n + 1); });
+    });
+  }
+  return attempt(1);
 }
 function handleAuthError(err) {
   if (err && (err.isAuth || err.message === 'AUTH')) { doLogout(true); return true; }
@@ -501,8 +535,14 @@ function syncAll(manual) {
         });
       });
     var todo = S.queue.filter(function (r) { return r.state === 'queued' || r.state === 'failed'; });
+    var doneCount = 0;
     todo.forEach(function (rec) {
       chain = chain.then(function () {
+        S.syncProgress = { done: doneCount, total: todo.length };
+        updateSyncProgress();
+        return shrinkStoredPhotos(rec);
+      }).then(function (rec2) {
+        rec = rec2 || rec;
         return rpc('fs_submit_visit', {
           p_token: S.token,
           p_visit: {
@@ -520,12 +560,15 @@ function syncAll(manual) {
           p_photos: (rec.photos || []).map(function (p) {
             return { id: p.id, mime: p.mime, data_base64: p.data_base64 };
           })
-        }).then(function (res) {
+        }, { timeoutMs: 90000, tries: 3 }).then(function (res) {
           rec.state = 'synced';
           rec.error = null;
           rec.server_distance_m = res && res.distance_from_site_m != null ? Number(res.distance_from_site_m) : null;
           rec.synced_at = new Date().toISOString();
           okCount++;
+          doneCount++;
+          S.syncProgress = { done: doneCount, total: todo.length };
+          updateSyncProgress();
           return idb.put('visits', rec);
         }).catch(function (err) {
           if (handleAuthError(err)) throw err;
@@ -537,6 +580,8 @@ function syncAll(manual) {
       });
     });
     return chain.then(function () {
+      S.syncProgress = null;
+      updateSyncProgress();
       if (todo.length && (manual || okCount)) {
         toast(okCount + ' visit' + (okCount === 1 ? '' : 's') + ' synced' + (failCount ? ', ' + failCount + ' failed' : ''));
       } else if (manual && !todo.length) {
@@ -679,6 +724,12 @@ function renderNavBadge() {
   var route = (location.hash || '#/home').replace(/^#/, '');
   nav.innerHTML = navLinksHTML(route);
   var dn = $('.drawer-nav'); if (dn) dn.innerHTML = navLinksHTML(route);
+}
+function updateSyncProgress() {
+  var el = $('#syncProgress');
+  if (!el) return;
+  var p = S.syncProgress;
+  el.textContent = p && p.total > 1 ? 'Sending ' + Math.min(p.done + 1, p.total) + ' of ' + p.total + '…' : '';
 }
 function updateNetDot() {
   var d = $('#netDot'); if (d) d.className = 'net-dot' + (navigator.onLine ? '' : ' off');
@@ -1479,18 +1530,30 @@ function bindVisit() {
   $('#btnGps').addEventListener('click', function () {
     var st = $('#gpsStatus');
     if (!navigator.geolocation) { st.innerHTML = '<span style="color:var(--danger)">GPS not available on this device</span>'; return; }
-    st.textContent = 'Getting location…';
-    navigator.geolocation.getCurrentPosition(function (pos) {
-      form.gps = {
-        lat: pos.coords.latitude, lon: pos.coords.longitude,
-        accuracy_m: pos.coords.accuracy, at: new Date().toISOString()
-      };
-      st.innerHTML = gpsStatusHTML();
-      updateReqs();
-    }, function (err) {
-      st.innerHTML = '<span style="color:var(--danger)">' +
-        (err.code === 1 ? 'Location permission denied' : 'Could not get location') + '</span>';
-    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+    // Two stages: satellite fix first, then fall back to network location with a
+    // longer window. A single strict attempt was failing in the mountains and
+    // leaving visits stuck as drafts.
+    function attempt(precise) {
+      st.textContent = precise ? 'Getting location…' : 'Weak GPS — trying network location…';
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        form.gps = {
+          lat: pos.coords.latitude, lon: pos.coords.longitude,
+          accuracy_m: pos.coords.accuracy, at: new Date().toISOString()
+        };
+        st.innerHTML = gpsStatusHTML();
+        updateReqs();
+      }, function (err) {
+        if (err.code === 1) {
+          st.innerHTML = '<span style="color:var(--danger)">Location permission denied — allow location for this site in your browser settings, then tap Capture again</span>';
+          return;
+        }
+        if (precise) { attempt(false); return; }
+        st.innerHTML = '<span style="color:var(--danger)">Could not get location — step into the open and tap Capture again</span>';
+      }, precise
+        ? { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+        : { enableHighAccuracy: false, timeout: 30000, maximumAge: 300000 });
+    }
+    attempt(true);
   });
 
   $('#fSample').addEventListener('change', function () {
@@ -1641,26 +1704,31 @@ function saveVisit(queueIt) {
     if (queueIt) syncAll();
   });
 }
+// Squeeze a loaded image down to the upload budget: drop quality first (keeps
+// the frame), then dimensions. Returns base64 without the data: prefix.
+function compressImage(img) {
+  var px = PHOTO_MAX_PX, q = PHOTO_QUALITY, b64 = '';
+  for (var attempt = 0; attempt < 7; attempt++) {
+    var scale = Math.min(1, px / Math.max(img.width, img.height));
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    b64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
+    if (b64.length <= PHOTO_TARGET_B64) break;
+    if (q > 0.55) q = Math.round((q - 0.1) * 100) / 100; else px = Math.round(px * 0.8);
+  }
+  return b64;
+}
 function downscalePhoto(file) {
   return new Promise(function (resolve, reject) {
     var img = new Image();
     var url = URL.createObjectURL(file);
     img.onload = function () {
       try {
-        // keep detail (1600px / q0.85); step down only if the result would
-        // exceed what the server accepts, so big camera photos still go through
-        var px = PHOTO_MAX_PX, q = PHOTO_QUALITY, b64;
-        for (var attempt = 0; attempt < 4; attempt++) {
-          var scale = Math.min(1, px / Math.max(img.width, img.height));
-          var canvas = document.createElement('canvas');
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-          b64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
-          if (b64.length <= PHOTO_MAX_B64) break;
-          px = Math.round(px * 0.8); q = Math.max(0.6, q - 0.08);
-        }
+        var b64 = compressImage(img);
         URL.revokeObjectURL(url);
+        if (!b64 || b64.length > PHOTO_HARD_B64) { reject(new Error('photo too large')); return; }
         resolve({ id: uuid(), mime: 'image/jpeg', data_base64: b64 });
       } catch (e) { reject(e); }
     };
@@ -1668,13 +1736,47 @@ function downscalePhoto(file) {
     img.src = url;
   });
 }
+// Rescue records already captured with the old, much larger compression: shrink
+// them in place before retrying, so an FS never has to re-photograph a visit.
+function shrinkStoredPhotos(rec) {
+  var photos = rec.photos || [];
+  if (!photos.some(function (p) { return p.data_base64 && p.data_base64.length > PHOTO_TARGET_B64 * 1.4; })) {
+    return Promise.resolve(rec);
+  }
+  return Promise.all(photos.map(function (p) {
+    if (!p.data_base64 || p.data_base64.length <= PHOTO_TARGET_B64 * 1.4) return p;
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var b64 = compressImage(img);
+          resolve(b64 && b64.length < p.data_base64.length
+            ? { id: p.id, mime: 'image/jpeg', data_base64: b64 } : p);
+        } catch (e) { resolve(p); }
+      };
+      img.onerror = function () { resolve(p); };
+      img.src = 'data:' + (p.mime || 'image/jpeg') + ';base64,' + p.data_base64;
+    });
+  })).then(function (out) {
+    rec.photos = out;
+    return idb.put('visits', rec).then(function () { return rec; });
+  }).catch(function () { return rec; });
+}
 
 /* ----------------------------------------------------------------- queue -- */
 function viewQueue() {
   var pend = pendingCount();
   var html = '<div class="row spread">' +
     '<h2 class="brand-font" style="font-size:18px;color:var(--forest-dark)">Sync status</h2>' +
-    '<button class="btn btn-secondary btn-sm" id="btnSyncNow">' + (S.syncing ? 'Syncing…' : 'Sync now') + '</button></div>';
+    '<button class="btn btn-secondary btn-sm" id="btnSyncNow">' + (S.syncing ? 'Syncing…' : 'Sync now') + '</button></div>' +
+    '<p class="muted small" id="syncProgress"></p>';
+  var readyDrafts = S.queue.filter(function (r) {
+    return r.state === 'draft' && visitReqs(r).every(function (x) { return x[1]; });
+  });
+  if (readyDrafts.length) {
+    html += '<button class="btn btn-primary btn-block mt8" id="btnQueueAll">Queue all ' +
+      readyDrafts.length + ' completed draft' + (readyDrafts.length === 1 ? '' : 's') + ' for sync</button>';
+  }
   if (!navigator.onLine) html += '<div class="info-box mt8">You are offline. Visits are saved on this phone and will sync automatically when you have signal.</div>';
   if (!S.queue.length) html += '<div class="card mt12"><p class="muted">No visits recorded on this phone yet.</p></div>';
   else {
@@ -1708,6 +1810,15 @@ function viewQueue() {
 function bindQueue() {
   $('#btnLogout').onclick = confirmLogout;
   $('#btnSyncNow').addEventListener('click', function () { syncAll(true); });
+  if ($('#btnQueueAll')) $('#btnQueueAll').addEventListener('click', function () {
+    var ready = S.queue.filter(function (r) {
+      return r.state === 'draft' && visitReqs(r).every(function (x) { return x[1]; });
+    });
+    Promise.all(ready.map(function (r) {
+      r.state = 'queued'; r.updated_at = new Date().toISOString();
+      return idb.put('visits', r);
+    })).then(loadQueue).then(function () { render(); syncAll(true); });
+  });
   $('#view').onclick = function (e) {
     var qid = e.target.getAttribute('data-queue');
     var did = e.target.getAttribute('data-del');
