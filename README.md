@@ -8,7 +8,9 @@ new farmers in their area, and — when applicable — capture soil-sensor valid
 (3 farms per validation site × 3 readings × 5 parameters + 0–20 cm topsoil samples).
 339 profiled farmers across the 18 sub-areas are pre-loaded from the AI Farm Data workbook.
 
-**No build step.** Plain HTML/JS/CSS served statically from the repo root.
+**No build step.** Plain HTML/JS/CSS served statically from the repo root. (`npm test` runs
+the Playwright e2e suite — dev-only tooling, kept off the edge by `.assetsignore`; see
+[TESTING.md](TESTING.md).)
 
 ## Hosting
 
@@ -54,7 +56,7 @@ as a PWA from the browser menu on phones.
 | Sites | all | Validation-site targets + progress, all 18 sub-areas, start a visit |
 | Farmers | all | Farmers in the FS's area (pre-loaded + FS-registered), search, register/edit farmers (offline-capable), tap a farmer for a detail card with full profile + visit history (synced + local), jump to a visit |
 | Map | all | Leaflet map (vendored locally — no CDN), district colours, validation sites ringed gold; FS view zooms to their own station with a lime halo and ★ marker popup |
-| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → advisory type — AI advisory or Conventional (**required**, form continues either way) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos via 📷 Camera or 🖼 Gallery, up to 3 (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
+| Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → advisory type — AI advisory or Conventional (**required**, form continues either way) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos via 📷 Add photo (the phone's own chooser — Camera or gallery), up to 3 (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
 | Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
 

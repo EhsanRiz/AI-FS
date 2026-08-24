@@ -26,13 +26,14 @@ var PARAMS = [
 ];
 var GPS_FLAG_M = 500;
 var MAX_PHOTOS = 3;
-// Field phones upload over weak rural LTE. Any camera photo is accepted, but it
-// is shrunk on-device to a byte budget so the POST actually completes — a 2 MB
-// upload on a weak link is what was producing "Failed to fetch".
-var PHOTO_MAX_PX = 1280;      // long edge after downscale
-var PHOTO_QUALITY = 0.8;      // starting JPEG quality
-var PHOTO_TARGET_B64 = 420000;  // ~315 KB per photo — the upload budget
-var PHOTO_HARD_B64 = 900000;    // never send more than this
+var PHOTO_MAX_PX = 1600;      // long edge after downscale
+var PHOTO_QUALITY = 0.85;     // starting JPEG quality
+// Upload budget, not just a ceiling. Rural LTE drops multi-MB POSTs mid-flight
+// (the browser reports that as "Failed to fetch"), so quality is stepped down
+// until the photo fits the budget — full-resolution camera photos still work,
+// they just travel smaller.
+var PHOTO_TARGET_B64 = 800000;  // ~600 KB image
+var PHOTO_MAX_B64 = 5400000;    // server ceiling (5.6 MB live); hard backstop
 
 /* ----------------------------------------------------------------- state -- */
 var S = {
@@ -388,8 +389,8 @@ function haversineM(lat1, lon1, lat2, lon2) {
 }
 
 /* ------------------------------------------------------------------- api -- */
-// One attempt, with a hard timeout — a stalled upload on a weak link must fail
-// fast enough to be retried rather than hanging until the browser kills it.
+// One attempt with a hard timeout: a stalled upload has to fail fast enough to
+// be retried instead of hanging until the browser gives up on it.
 function rpcOnce(fn, args, timeoutMs) {
   var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
@@ -405,6 +406,14 @@ function rpcOnce(fn, args, timeoutMs) {
   if (ctrl) opts.signal = ctrl.signal;
   return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, opts).then(function (res) {
     if (timer) clearTimeout(timer);
+    return res;
+  }, function () {
+    if (timer) clearTimeout(timer);
+    var err = new Error('Connection lost while sending — will retry automatically');
+    err.retryable = true;
+    err.network = true;
+    throw err;
+  }).then(function (res) {
     if (res.ok) return res.status === 204 ? null : res.json();
     return res.json().catch(function () { return {}; }).then(function (body) {
       var msg = (body && body.message) || ('Request failed (' + res.status + ')');
@@ -412,20 +421,14 @@ function rpcOnce(fn, args, timeoutMs) {
       err.status = res.status;
       err.isAuth = res.status === 403 && (msg === 'AUTH' || /session|token/i.test(msg));
       if (msg === 'AUTH') err.message = 'Session expired — please sign in again.';
-      // server/gateway hiccups are worth retrying; business rules are not
+      // gateway/server hiccups are worth another go; business rules are not
       err.retryable = res.status >= 500 || res.status === 429 || res.status === 408;
       throw err;
     });
-  }, function () {
-    if (timer) clearTimeout(timer);
-    var err = new Error('Connection lost while sending — will retry automatically');
-    err.retryable = true;
-    err.network = true;
-    throw err;
   });
 }
-// All our write RPCs are idempotent (client-generated ids, upserts), so retrying
-// is always safe.
+// Every write RPC is idempotent (client-generated ids, upserts), so retrying is
+// always safe.
 function rpc(fn, args, opts) {
   opts = opts || {};
   var tries = opts.tries || 3;
@@ -1346,10 +1349,18 @@ function viewVisit(route) {
     var rec = S.queue.find(function (r) { return r.id === q.edit; });
     form = rec ? JSON.parse(JSON.stringify(rec)) : blankVisit(null);
   } else if (!form || form._done || q.site) {
-    var pre = q.site ? Number(q.site) : defaultSiteId();
-    if (pre && !canVisit(pre)) pre = defaultSiteId();
-    form = blankVisit(pre);
-    if (q.farmer && pre) form.farmer_id = q.farmer;
+    // no form in memory and no explicit target = we may have been reloaded
+    // mid-capture; resume the autosaved visit rather than starting over
+    var resume = (!form && !q.site) ? resumableDraft() : null;
+    if (resume) {
+      form = JSON.parse(JSON.stringify(resume));
+      setTimeout(function () { toast('Resumed your unsaved visit'); }, 400);
+    } else {
+      var pre = q.site ? Number(q.site) : defaultSiteId();
+      if (pre && !canVisit(pre)) pre = defaultSiteId();
+      form = blankVisit(pre);
+      if (q.farmer && pre) form.farmer_id = q.farmer;
+    }
   }
   var site = form.site_id ? siteById(form.site_id) : null;
   var fList = form.site_id ? farmsOf(form.site_id) : [];
@@ -1446,7 +1457,9 @@ function viewVisit(route) {
   html += '<div class="card"><h2>Photos & notes</h2>' +
     '<p class="muted small">At least one photo is required. Notes are optional.</p>' +
     '<div class="photo-strip" id="photoStrip">' + photoStripHTML() + '</div>' +
-    '<input type="file" id="fPhotoCam" accept="image/*" capture="environment" style="display:none">' +
+    // no capture="environment": the forced camera intent is broken on several
+    // Android builds (see v13). The phone's own chooser offers Camera first and
+    // still leaves Gallery available if a device's camera misbehaves.
     '<input type="file" id="fPhoto" accept="image/*" style="display:none">' +
     '<div class="field mt12"><label>Notes (optional)</label>' +
     '<textarea id="fNotes" placeholder="Field conditions, issues…">' + esc(form.notes) + '</textarea></div>' +
@@ -1504,8 +1517,8 @@ function photoStripHTML() {
       '<button type="button" data-rmphoto="' + i + '">×</button></span>';
   }).join('');
   if ((form.photos || []).length < MAX_PHOTOS) {
-    html += '<label for="fPhotoCam" class="photo-add" role="button" id="btnCamera">📷<span style="font-size:11px;font-weight:700">Camera</span></label>' +
-      '<label for="fPhoto" class="photo-add" role="button" id="btnGallery">🖼<span style="font-size:11px;font-weight:700">Gallery</span></label>';
+    html += '<label for="fPhoto" class="photo-add" role="button" id="btnAddPhoto">📷' +
+      '<span style="font-size:11px;font-weight:700">Add photo</span></label>';
   }
   return html;
 }
@@ -1530,9 +1543,9 @@ function bindVisit() {
   $('#btnGps').addEventListener('click', function () {
     var st = $('#gpsStatus');
     if (!navigator.geolocation) { st.innerHTML = '<span style="color:var(--danger)">GPS not available on this device</span>'; return; }
-    // Two stages: satellite fix first, then fall back to network location with a
-    // longer window. A single strict attempt was failing in the mountains and
-    // leaving visits stuck as drafts.
+    // Two stages: satellite fix first, then network location with a longer
+    // window. One strict attempt was failing in the mountains and leaving
+    // visits stuck as drafts that could never be sent.
     function attempt(precise) {
       st.textContent = precise ? 'Getting location…' : 'Weak GPS — trying network location…';
       navigator.geolocation.getCurrentPosition(function (pos) {
@@ -1596,21 +1609,24 @@ function bindVisit() {
   });
 
   var photoInput = $('#fPhoto');
-  var camInput = $('#fPhotoCam');
   // onclick property (not addEventListener): rerenderVisit keeps the same #view
   // element, so a listener would stack up on every partial re-render.
   $('#view').onclick = function (e) {
-    // the labels open the pickers natively; these are only backstops
-    if (e.target.closest && e.target.closest('#btnGallery')) { try { photoInput.click(); } catch (err) {} }
-    else if (e.target.closest && e.target.closest('#btnCamera')) { try { camInput.click(); } catch (err) {} }
+    // #btnAddPhoto is a <label for="fPhoto">: the OS opens the picker itself.
+    // Never call photoInput.click() from here as well — one tap would then
+    // activate the input twice and the second activation cancels the first,
+    // which is how the camera stopped returning photos in v16. Only save the
+    // form first, in case the picker pushes us into the background.
+    if (e.target.closest && e.target.closest('#btnAddPhoto')) autosaveForm();
     var rm = e.target.getAttribute('data-rmphoto');
     if (rm != null) {
       form.photos.splice(Number(rm), 1);
       $('#photoStrip').innerHTML = photoStripHTML();
       updateReqs();
+      autosaveForm();
     }
   };
-  function acceptPhoto() {
+  photoInput.addEventListener('change', function () {
     var file = this.files && this.files[0];
     this.value = '';
     if (!file) return;
@@ -1619,11 +1635,12 @@ function bindVisit() {
       form.photos.push(p);
       $('#photoStrip').innerHTML = photoStripHTML();
       updateReqs();
+      autosaveForm();
       toast('Photo added');
-    }).catch(function () { toast('Could not read that photo'); });
-  }
-  photoInput.addEventListener('change', acceptPhoto);
-  camInput.addEventListener('change', acceptPhoto);
+    }).catch(function (err) {
+      toast('Could not add that photo — ' + ((err && err.message) || 'unknown error'));
+    });
+  });
 
   $('#btnSave').addEventListener('click', function () { saveVisit(true); });
   $('#btnDraft').addEventListener('click', function () { saveVisit(false); });
@@ -1653,6 +1670,26 @@ function registerFarmer(data, done) {
 function rerenderVisit() {
   var v = $('#view');
   if (v) { v.innerHTML = viewVisit(location.hash.replace(/^#/, '').split('?')[0]); bindVisit(); }
+}
+// The visit form lives in memory only until the FS taps Save. Opening the photo
+// picker (or any app switch) can put the browser in the background long enough
+// for a low-memory phone to discard the page, which used to lose the whole
+// visit. Persist it as a draft at those moments and pick it up again on the way
+// back, so an interrupted capture costs nothing.
+function autosaveForm() {
+  if ((location.hash || '').indexOf('#/visit') !== 0) return Promise.resolve();
+  if (!form || form._done || !form.site_id) return Promise.resolve();
+  captureFormText();
+  form._resume = true;
+  form.updated_at = new Date().toISOString();
+  var rec = JSON.parse(JSON.stringify(form));
+  return idb.put('visits', rec).then(loadQueue).catch(function () {});
+}
+function resumableDraft() {
+  // S.queue is sorted newest-first, so the first hit is the latest interruption
+  return (S.queue || []).filter(function (r) {
+    return r._resume && r.state === 'draft';
+  })[0] || null;
 }
 function captureFormText() {
   if (!$('#fNotes')) return;
@@ -1695,6 +1732,7 @@ function saveVisit(queueIt) {
   form.updated_at = new Date().toISOString();
   form.state = queueIt ? 'queued' : 'draft';
   form.error = null;
+  form._resume = false;   // an explicit save supersedes any autosave
   var rec = JSON.parse(JSON.stringify(form));
   idb.put('visits', rec).then(function () {
     form._done = true;
@@ -1704,8 +1742,8 @@ function saveVisit(queueIt) {
     if (queueIt) syncAll();
   });
 }
-// Squeeze a loaded image down to the upload budget: drop quality first (keeps
-// the frame), then dimensions. Returns base64 without the data: prefix.
+// Squeeze a loaded image to the upload budget: drop quality first (keeps the
+// full frame and 1600px detail), then dimensions only if that is not enough.
 function compressImage(img) {
   var px = PHOTO_MAX_PX, q = PHOTO_QUALITY, b64 = '';
   for (var attempt = 0; attempt < 7; attempt++) {
@@ -1715,29 +1753,13 @@ function compressImage(img) {
     canvas.height = Math.max(1, Math.round(img.height * scale));
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
     b64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
-    if (b64.length <= PHOTO_TARGET_B64) break;
-    if (q > 0.55) q = Math.round((q - 0.1) * 100) / 100; else px = Math.round(px * 0.8);
+    if (b64 && b64.length <= PHOTO_TARGET_B64) break;
+    if (q > 0.6) q = Math.round((q - 0.08) * 100) / 100; else px = Math.round(px * 0.8);
   }
   return b64;
 }
-function downscalePhoto(file) {
-  return new Promise(function (resolve, reject) {
-    var img = new Image();
-    var url = URL.createObjectURL(file);
-    img.onload = function () {
-      try {
-        var b64 = compressImage(img);
-        URL.revokeObjectURL(url);
-        if (!b64 || b64.length > PHOTO_HARD_B64) { reject(new Error('photo too large')); return; }
-        resolve({ id: uuid(), mime: 'image/jpeg', data_base64: b64 });
-      } catch (e) { reject(e); }
-    };
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-// Rescue records already captured with the old, much larger compression: shrink
-// them in place before retrying, so an FS never has to re-photograph a visit.
+// Visits captured before the budget existed carry oversized photos; shrink them
+// in place before retrying so no one has to re-photograph a visit.
 function shrinkStoredPhotos(rec) {
   var photos = rec.photos || [];
   if (!photos.some(function (p) { return p.data_base64 && p.data_base64.length > PHOTO_TARGET_B64 * 1.4; })) {
@@ -1750,7 +1772,7 @@ function shrinkStoredPhotos(rec) {
       img.onload = function () {
         try {
           var b64 = compressImage(img);
-          resolve(b64 && b64.length < p.data_base64.length
+          resolve(b64 && b64.length > 1000 && b64.length < p.data_base64.length
             ? { id: p.id, mime: 'image/jpeg', data_base64: b64 } : p);
         } catch (e) { resolve(p); }
       };
@@ -1761,6 +1783,28 @@ function shrinkStoredPhotos(rec) {
     rec.photos = out;
     return idb.put('visits', rec).then(function () { return rec; });
   }).catch(function () { return rec; });
+}
+function downscalePhoto(file) {
+  return new Promise(function (resolve, reject) {
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    img.onload = function () {
+      try {
+        var b64 = compressImage(img);
+        URL.revokeObjectURL(url);
+        // a phone that runs out of memory mid-encode hands back an empty canvas
+        if (!b64 || b64.length < 1000) throw new Error('the phone ran out of memory encoding it');
+        if (b64.length > PHOTO_MAX_B64) throw new Error('it is too large even after shrinking');
+        resolve({ id: uuid(), mime: 'image/jpeg', data_base64: b64 });
+      } catch (e) { reject(e); }
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error('this phone could not open the image (' +
+        (file.type || 'unknown format') + ', ' + Math.round((file.size || 0) / 1024) + ' KB)'));
+    };
+    img.src = url;
+  });
 }
 
 /* ----------------------------------------------------------------- queue -- */
@@ -2090,7 +2134,9 @@ window.addEventListener('online', function () {
 });
 window.addEventListener('offline', updateNetDot);
 document.addEventListener('visibilitychange', function () {
-  if (!document.hidden && S.token) syncAll();
+  // going away (camera app, call, home button): save before the OS can reclaim us
+  if (document.hidden) { autosaveForm(); return; }
+  if (S.token) syncAll();
 });
 
 loadQueue().catch(function () {}).then(function () {

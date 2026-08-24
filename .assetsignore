@@ -7,3 +7,11 @@ supabase/
 wrangler.toml
 README.md
 TESTING.md
+node_modules/
+tests/
+test-results/
+playwright-report/
+playwright.config.js
+package.json
+package-lock.json
+.gitignore
