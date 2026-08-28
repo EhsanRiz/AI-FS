@@ -31,16 +31,24 @@ as a PWA from the browser menu on phones.
 - **Backend:** Supabase project **AI-FS** (`kwhnpzhckjdlzawvvhvt`). (The previous project,
   4D-roster, was deleted in Aug 2026; the database was rebuilt — see
   [supabase/REBUILD.md](supabase/REBUILD.md).) All objects are `fs_`-prefixed and isolated: tables are deny-all RLS; the only
-  access path is the `SECURITY DEFINER` RPCs in `supabase/schema.sql`
-  and `supabase/schema_v4_v9.sql` (`fs_login`, `fs_bootstrap`, `fs_submit_visit`,
+  access path is the `SECURITY DEFINER` RPCs in `supabase/schema.sql`,
+  `supabase/schema_v4_v9.sql` and `supabase/schema_v10_manager_edit.sql`
+  (`fs_login`, `fs_bootstrap`, `fs_submit_visit`,
   `fs_progress`, `fs_activity`, `fs_register_farmer`, `fs_farmer_detail`, `fs_site_detail`,
-  `fs_supervisor_detail`, `fs_visit_detail`, `fs_add_supervisor`, `fs_set_supervisor`).
+  `fs_supervisor_detail`, `fs_visit_detail`, `fs_add_supervisor`, `fs_set_supervisor`,
+  `fs_update_visit`).
   **Every schema change must be committed here — never applied only in the dashboard.**
 - **Auth:** first-name username (or phone) + PIN — one login field takes either. `fs_login`
   returns a 60-day bearer token (sha256-hashed at rest; bcrypt PINs; 8 failed attempts →
   15-min lockout). Roles: `supervisor` (the ONLY role that records visits and registers
   farmers; station-locked), `viewer` (read-only monitoring) and `manager` (monitoring + team
-  management + farmer data corrections — no visit capture). All write rules are enforced
+  management + data corrections — no visit capture). Managers correct farmer
+  records and, since v10, synced visit data (advisory answer, farmer, issue,
+  soil readings, sample, notes) from the visit-detail modal; GPS, photos and
+  timestamps are immutable evidence, and every correction is written to the
+  `fs_visit_edits` audit log and shown on the visit ("Corrected by …").
+  Managers also change account roles in-app (Dashboard → Field team → Role),
+  so promoting a viewer to manager needs no SQL. All write rules are enforced
   server-side, not just hidden in the UI. The 17 Field Officers are seeded with
   usernames = first names (the two Rorisangs are `rorisangt`/`rorisangs`); programme staff
   have personal accounts; phones can be added later.
@@ -62,7 +70,7 @@ as a PWA from the browser menu on phones.
 | Map | all | Leaflet map (vendored locally — no CDN), district colours, validation sites ringed gold; FS view zooms to their own station with a lime halo and ★ marker popup |
 | Visit form | all | Site → farmer (dropdown of their area, or register new) → GPS capture (**required**) → advisory type — AI advisory or Conventional (**required**, form continues either way) → specific issue (optional) → optional soil section: farm, 3×7 readings grid, sample flag + ID → photos via 📷 Add photo (the phone's own chooser — Camera or gallery), up to 3 (**≥1 required**) + optional notes. A checklist above Save & sync shows what's missing; the button only activates (highlighted green) when GPS + AI answer + photo are present, and the server enforces the same rules. Drafts can always be saved locally. |
 | Sync | all | Per-record state, edit/retry/delete, manual sync |
-| Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs |
+| Dashboard | manager | Totals vs targets, per-site progress bars, team last-seen/last-GPS, activity feed with data-quality flags (GPS >500 m from site, out-of-range values), add/deactivate members, reset PINs, change roles, correct synced visit data (audited) |
 
 ## Testing
 
@@ -76,7 +84,10 @@ delete from fs_farmers where source = 'fs_registered';
 
 ## Managing accounts
 
-Managers do this in-app (Dashboard → Field team). To reset a PIN in SQL instead:
+Managers do this in-app (Dashboard → Field team): add/deactivate members,
+reset PINs, and change roles (the Role button; the server refuses changing
+your own role, so a team is never left managerless by accident). To reset a
+PIN in SQL instead:
 
 ```sql
 update fs_supervisors set pin_hash = crypt('NEW_PIN', gen_salt('bf')) where phone = '<phone>';

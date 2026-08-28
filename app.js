@@ -200,6 +200,22 @@ function visitPhotosHTML(photos) {
     return '<img class="modal-photo" src="data:' + (ph.mime || 'image/jpeg') + ';base64,' + ph.data_base64 + '" alt="visit photo">';
   }).join('');
 }
+// corrections are research-data changes — always visible, never silent
+var EDIT_FIELD_LABELS = {
+  ai_administered: 'advisory', farmer_id: 'farmer', farm_id: 'farm',
+  issue: 'issue', notes: 'notes', sample_collected: 'sample',
+  sample_id: 'sample ID', readings: 'soil readings'
+};
+function visitEditsHTML(edits) {
+  if (!edits || !edits.length) return '';
+  return '<div class="muted small mt8">' + edits.map(function (e) {
+    var fields = Object.keys(e.changes || {}).map(function (k) {
+      return EDIT_FIELD_LABELS[k] || k;
+    }).join(', ');
+    return '✎ Corrected by ' + esc(e.by) + ' · ' + fmtWhen(e.at) +
+      (fields ? ' <span class="muted">(' + esc(fields) + ')</span>' : '');
+  }).join('<br>') + '</div>';
+}
 function visitDetailModal(id) {
   var local = S.queue.find(function (r) { return r.id === id; });
   if (local) {
@@ -231,13 +247,111 @@ function visitDetailModal(id) {
   showModal('Visit details', '<p class="muted small">Loading…</p>');
   rpc('fs_visit_detail', { p_token: S.token, p_visit_id: id }).then(function (d) {
     var body = $('#modalBody'); if (!body) return;
+    S._visitDetail = d;
     body.innerHTML = visitDetailRows(d.visit || {}) +
+      visitEditsHTML(d.edits) +
       visitReadingsTable(d.readings) +
-      visitPhotosHTML(d.photos);
+      visitPhotosHTML(d.photos) +
+      (S.me && S.me.role === 'manager'
+        ? '<button class="btn btn-outline btn-block mt12" id="btnEditVisit">✎ Edit / correct this visit</button>' : '');
+    var eb = $('#btnEditVisit');
+    if (eb) eb.onclick = function () { visitEditModal(id); };
   }).catch(function (err) {
     var body = $('#modalBody');
     if (body && !handleAuthError(err)) body.innerHTML = '<p class="small" style="color:var(--danger)">' + esc(err.message) + '</p>';
   });
+}
+/* Manager-only correction of a synced visit. GPS and photos are the evidence
+   a visit happened and stay immutable; the server logs every change to
+   fs_visit_edits and enforces the manager check regardless of this UI. */
+function visitEditModal(id) {
+  var d = S._visitDetail || {};
+  var v = d.visit || {};
+  if (v.id !== id) { toast('Open the visit first'); return; }
+  var siteFarmers = farmersOf(v.site_id);
+  var siteFarms = farmsOf(v.site_id);
+  var by = {};
+  (d.readings || []).forEach(function (r) { (by[r.parameter] = by[r.parameter] || {})[r.replicate] = r; });
+
+  var html = '<p class="muted small">GPS, photos and timestamps cannot be changed. ' +
+    'Every correction is logged with your name.</p>';
+  html += '<div class="field"><label>Advisory</label><select id="eAi">' +
+    '<option value="true"' + (v.ai_administered === true ? ' selected' : '') + '>AI advisory</option>' +
+    '<option value="false"' + (v.ai_administered === false ? ' selected' : '') + '>Conventional (no AI)</option>' +
+    '</select></div>';
+  html += '<div class="field"><label>Farmer</label><select id="eFarmer">' +
+    '<option value="">— general visit —</option>' +
+    siteFarmers.map(function (f) {
+      return '<option value="' + f.id + '"' + (f.id === v.farmer_id ? ' selected' : '') + '>' +
+        esc(f.name) + (f.village ? ' — ' + esc(f.village) : '') + '</option>';
+    }).join('') + '</select></div>';
+  if (siteFarms.length) {
+    html += '<div class="field"><label>Validation farm</label><select id="eFarm">' +
+      '<option value="">— none —</option>' +
+      siteFarms.map(function (f) {
+        return '<option value="' + f.id + '"' + (f.id === v.farm_id ? ' selected' : '') + '>' + esc(f.label) + '</option>';
+      }).join('') + '</select></div>';
+  }
+  html += '<div class="field"><label>Specific issue (optional)</label>' +
+    '<input id="eIssue" type="text" value="' + esc(v.issue || '') + '"></div>';
+  html += '<h3 class="mt12">Soil readings</h3>' +
+    '<p class="muted small">Leave blank what was not measured.</p>' +
+    '<div class="scroll-x"><table class="readings-table" id="editReadings"><thead><tr><th></th><th>R1</th><th>R2</th><th>R3</th></tr></thead><tbody>' +
+    PARAMS.map(function (p) {
+      return '<tr><td>' + esc(p.label) + (p.unit ? '<span class="unit">' + esc(p.unit) + '</span>' : '') + '</td>' +
+        [1, 2, 3].map(function (rep) {
+          var r = (by[p.key] || {})[rep];
+          return '<td><input type="text" inputmode="decimal" data-param="' + p.key + '" data-rep="' + rep +
+            '" value="' + (r && r.value != null ? esc(r.value) : '') + '"></td>';
+        }).join('') + '</tr>';
+    }).join('') + '</tbody></table></div>';
+  html += '<div class="toggle-row mt12"><span style="font-weight:700">Sample collected for lab?</span>' +
+    '<span class="switch"><input type="checkbox" id="eSample"' + (v.sample_collected ? ' checked' : '') + '><span class="track"></span></span></div>' +
+    '<div class="field mt8" id="eSampleIdWrap" style="' + (v.sample_collected ? '' : 'display:none') + '">' +
+    '<label>Sample ID</label><input id="eSampleId" type="text" value="' + esc(v.sample_id || '') + '"></div>';
+  html += '<div class="field mt8"><label>Notes (optional)</label>' +
+    '<textarea id="eNotes">' + esc(v.notes || '') + '</textarea></div>';
+  html += '<button class="btn btn-primary btn-block mt12" id="btnSaveEdit">Save corrections</button>';
+
+  showModal('Edit visit', html);
+  $('#eSample').onchange = function () {
+    $('#eSampleIdWrap').style.display = this.checked ? '' : 'none';
+  };
+  $('#btnSaveEdit').onclick = function () {
+    var readings = [];
+    var bad = null;
+    $all('#editReadings input').forEach(function (inp) {
+      var raw = inp.value.trim().replace(',', '.');
+      if (raw === '') return;
+      if (isNaN(Number(raw))) { bad = raw; return; }
+      var p = PARAMS.find(function (x) { return x.key === inp.dataset.param; });
+      readings.push({ parameter: inp.dataset.param, replicate: Number(inp.dataset.rep),
+                      value: Number(raw), unit: p ? p.unit : '' });
+    });
+    if (bad != null) { toast('Reading "' + bad + '" is not a number'); return; }
+    var patch = {
+      ai_administered: $('#eAi').value === 'true',
+      farmer_id: $('#eFarmer').value || null,
+      issue: $('#eIssue').value.trim() || null,
+      notes: $('#eNotes').value.trim() || null,
+      sample_collected: $('#eSample').checked,
+      sample_id: $('#eSample').checked ? ($('#eSampleId').value.trim() || null) : null
+    };
+    if (siteFarms.length) patch.farm_id = $('#eFarm').value ? Number($('#eFarm').value) : null;
+    var btn = $('#btnSaveEdit');
+    btn.disabled = true;
+    rpc('fs_update_visit', { p_token: S.token, p_visit_id: id, p_patch: patch, p_readings: readings })
+      .then(function (res) {
+        toast(res && res.changed === false ? 'Nothing changed' : 'Visit corrected');
+        closeModal();
+        visitDetailModal(id);              // re-fetch: shows the new values + edit history
+        if ($('#dashBody')) bindDash();    // refresh the feed behind the modal
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        if (!handleAuthError(err)) toast(err.message);
+      });
+  };
 }
 function actRowHTML(v) {
   return '<div class="queue-item act-row" data-visit="' + v.id + '">' +
@@ -2071,7 +2185,10 @@ function renderDash(prog, act) {
 
   // team — Field Supervisors (performance data) separate from programme staff
   var mgmtBtns = function (m) {
+    // no Role button on your own row — the server refuses self-demotion too
     return canManage ? '<span class="row" style="gap:6px">' +
+      (S.me && m.id === S.me.id ? ''
+        : '<button class="btn btn-outline btn-sm" data-role="' + m.id + '" data-current="' + m.role + '" data-name="' + esc(m.name) + '">Role</button>') +
       '<button class="btn btn-outline btn-sm" data-pin="' + m.id + '" data-name="' + esc(m.name) + '">PIN</button>' +
       '<button class="btn ' + (m.active ? 'btn-danger-outline' : 'btn-secondary') + ' btn-sm" data-toggle="' + m.id + '" data-active="' + m.active + '" data-name="' + esc(m.name) + '">' +
       (m.active ? 'Off' : 'On') + '</button></span>' : '';
@@ -2138,6 +2255,23 @@ function renderDash(prog, act) {
     if (mk) { statModal(mk.getAttribute('data-modal')); return; }
     var pinId = e.target.getAttribute('data-pin');
     var togId = e.target.getAttribute('data-toggle');
+    var roleId = e.target.getAttribute('data-role');
+    if (roleId) {
+      var curRole = e.target.getAttribute('data-current');
+      var rnm = e.target.getAttribute('data-name');
+      var nr = prompt('Role for ' + rnm + ' — type supervisor, manager or viewer:', curRole);
+      if (!nr) return;
+      nr = nr.trim().toLowerCase();
+      if (['supervisor', 'manager', 'viewer'].indexOf(nr) === -1) {
+        toast('Role must be supervisor, manager or viewer'); return;
+      }
+      if (nr === curRole) return;
+      if (!confirm('Change ' + rnm + ' from ' + curRole + ' to ' + nr + '?')) return;
+      rpc('fs_set_supervisor', { p_token: S.token, p_id: roleId, p_role: nr })
+        .then(function () { toast(rnm + ' is now a ' + nr); bindDash(); })
+        .catch(function (err) { if (!handleAuthError(err)) toast(err.message); });
+      return;
+    }
     if (pinId) {
       var np = prompt('New PIN for ' + e.target.getAttribute('data-name') + ' (4-8 digits):');
       if (!np) return;
