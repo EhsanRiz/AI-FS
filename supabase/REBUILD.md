@@ -26,8 +26,10 @@ something by hand, commit the SQL in the same change.
 | 1 | `schema.sql` | tables, RLS, auth helpers, core RPCs, the 18 sites, validation farms |
 | 2 | `schema_v4_v9.sql` | `fs_farmers`, roles, register/edit, drill-downs, progress |
 | 3 | `2026-08_relink_queued_visits.sql` | current `fs_submit_visit` (supersedes the one in step 2) |
-| 4 | *account seed* | the 21 accounts — **not in the repo**, see below |
-| 5 | `2026-08_farmer_list_update.sql` | the 344 profiled farmers |
+| 4 | `schema_v10_manager_edit.sql` | manager visit corrections (`fs_update_visit`), `fs_visit_edits` audit log, in-app role changes |
+| 5 | *account seed* | the 21 accounts — **not in the repo**, see below |
+| 6 | `2026-08_farmer_list_update.sql` | the 344 profiled farmers |
+| 7 | `2026-08_promote_mantsatsi.sql` | Mantsatsi viewer → manager (no-op once applied) |
 
 Then point the app at the new project — `SUPABASE_URL` and
 `SUPABASE_ANON_KEY` at the top of `app.js` — and bump the cache version
