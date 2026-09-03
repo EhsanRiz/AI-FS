@@ -644,6 +644,52 @@ function stampQueuedFarmerNames() {
   })).catch(function () {});
 }
 
+/* The database this app used until 24 Aug 2026 was lost. A visit that had
+   already reached it is marked 'synced' here, and sync only ever sends 'queued'
+   and 'failed' records — so those visits sit on the phone forever while
+   existing nowhere else. Re-queue them once, so the fieldwork that was done
+   before the rebuild comes back.
+
+   fs_submit_visit and fs_register_farmer both upsert on the client-generated
+   id, so re-sending something that DID survive cannot duplicate it.
+
+   This needs no "already done" flag, and deliberately does not use one: a flag
+   set on an open where the queue happened to be empty — or had failed to load —
+   would skip the recovery for good. It is self-terminating instead. Re-queuing
+   clears the 'synced' state, and a successful re-send stamps a post-rebuild
+   synced_at, so nothing matches twice. */
+var REBUILD_AT = '2026-08-24T21:04:00.000Z';   // when the new database went up
+
+function requeuePreRebuildSyncs() {
+  // synced before the rebuild — records with no timestamp predate it too
+  function stale(r) {
+    return r.state === 'synced' && (!r.synced_at || r.synced_at < REBUILD_AT);
+  }
+  // only what the server will accept, so nothing lands as a permanent failure
+  function sendable(r) {
+    return r.gps && r.gps.lat != null &&
+           (r.ai_administered === true || r.ai_administered === false) &&
+           (r.photos || []).length > 0;
+  }
+  var visits = S.queue.filter(function (r) { return stale(r) && sendable(r); });
+  var regs = S.regQueue.filter(stale);
+  if (!visits.length && !regs.length) return Promise.resolve();
+
+  return Promise.all(
+    regs.map(function (r) { r.state = 'queued'; return idb.put('farmers', r); })
+      .concat(visits.map(function (r) {
+        r.state = 'queued'; r.error = null;
+        return idb.put('visits', r);
+      }))
+  ).then(function () {
+    if (visits.length) {
+      toast('Re-sending ' + visits.length + ' earlier visit' +
+            (visits.length === 1 ? '' : 's') + ' — please stay online');
+    }
+    return loadQueue();
+  }).catch(function () {});
+}
+
 /* ------------------------------------------------------------------ sync -- */
 function syncAll(manual) {
   if (S.syncing || !S.token) return Promise.resolve();
@@ -2308,7 +2354,10 @@ document.addEventListener('visibilitychange', function () {
   if (S.token) syncAll();
 });
 
-loadQueue().catch(function () {}).then(stampQueuedFarmerNames).then(function () {
+loadQueue().catch(function () {})
+  .then(requeuePreRebuildSyncs)
+  .then(stampQueuedFarmerNames)
+  .then(function () {
   if (!location.hash) location.hash = S.token ? '#/home' : '#/login';
   render();
   if (S.token) {
