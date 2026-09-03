@@ -412,3 +412,43 @@ button.nudge { font:inherit; cursor:pointer; }
 .act-row { cursor: pointer; }
 .act-row:active { background: #f6f5f0; }
 .modal-photo { width: 100%; border-radius: 12px; margin-top: 8px; border: 1px solid var(--line); }
+
+/* ---- v11: per-field correction + swipe actions (managers) ---- */
+.detail-table td { vertical-align: middle; }
+.detail-table .row-val { margin-right: 6px; }
+.row-edit {
+  border: 1px solid var(--line); background: #fff; color: var(--forest);
+  border-radius: 8px; width: 30px; height: 30px; line-height: 1;
+  font-size: 15px; cursor: pointer; vertical-align: middle;
+}
+.row-edit:active { background: #eef7e9; }
+.row-editor { display: flex; flex-direction: column; gap: 6px; }
+.row-editor select, .row-editor input, .row-editor textarea {
+  width: 100%; padding: 9px 10px; border: 1px solid var(--line);
+  border-radius: 10px; font: inherit; background: #fff;
+}
+.row-editor-btns { display: flex; gap: 6px; }
+.btn-sm { padding: 7px 12px; font-size: 14px; border-radius: 9px; }
+.row-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.row-check input { width: 20px; height: 20px; accent-color: var(--forest); }
+
+/* the actions sit behind the row and are uncovered as it slides left */
+.swipe-wrap { position: relative; overflow: hidden; border-radius: 12px; }
+.swipe-actions {
+  position: absolute; inset: 0 0 0 auto; display: flex; align-items: stretch;
+}
+.swipe-btn {
+  border: 0; color: #fff; font: inherit; font-weight: 700; font-size: 13px;
+  padding: 0 16px; cursor: pointer; white-space: nowrap;
+}
+.swipe-btn.edit { background: var(--forest); }
+.swipe-btn.del { background: var(--danger, #b91c1c); }
+.act-row.swipeable {
+  position: relative; background: #fff;
+  transition: transform .18s ease; will-change: transform;
+}
+.act-row.swipeable.swiped { transform: translateX(-160px); }
+@media (hover: hover) {
+  /* no touch here, so the row exposes its actions on hover instead */
+  .swipe-wrap:hover .act-row.swipeable { transform: translateX(-160px); }
+}

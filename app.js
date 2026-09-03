@@ -164,21 +164,106 @@ function visitDetailRows(v) {
             ? ' · <span class="flag">' + fmtDist(v.distance_from_site_m) + ' from site ⚠</span>'
             : ' · <b style="color:var(--ok)">' + fmtDist(v.distance_from_site_m) + ' from site</b>')
         : '');
+  // [label, value, editable field] — a field key adds a pencil for managers.
+  // When/Supervisor/Site/GPS carry no key: they are the evidence the visit
+  // happened, and the server refuses to change them however it is asked.
   var rows = [
-    ['When', fmtWhen(v.submitted_at || v.synced_at || v.updated_at)],
-    ['Supervisor', v.supervisor ? esc(v.supervisor) : null],
-    ['Site', esc(v.site || '') + (v.farm ? ' · ' + esc(v.farm) : '')],
-    ['Farmer', v.farmer ? esc(v.farmer) : '<span class="muted">general visit</span>'],
-    ['GPS', gps],
+    ['When', fmtWhen(v.submitted_at || v.synced_at || v.updated_at), null],
+    ['Supervisor', v.supervisor ? esc(v.supervisor) : null, null],
+    ['Site', esc(v.site || '') + (v.farm ? ' · ' + esc(v.farm) : ''), null],
+    ['Farmer', v.farmer ? esc(v.farmer) : '<span class="muted">general visit</span>', 'farmer_id'],
+    ['GPS', gps, null],
     ['Advisory', v.ai_administered === true ? '<b style="color:var(--ok)">AI advisory</b>'
-                  : (v.ai_administered === false ? 'Conventional (no AI)' : '<span class="muted">not recorded</span>')],
-    ['Issue', v.issue ? '<span style="color:var(--danger)">' + esc(v.issue) + '</span>' : null],
-    ['Sample', v.sample_collected ? esc(v.sample_id || '✓ collected') : null],
-    ['Notes', v.notes ? esc(v.notes) : null]
+                  : (v.ai_administered === false ? 'Conventional (no AI)' : '<span class="muted">not recorded</span>'),
+     'ai_administered'],
+    ['Issue', v.issue ? '<span style="color:var(--danger)">' + esc(v.issue) + '</span>'
+                      : '<span class="muted">none</span>', 'issue'],
+    ['Sample', v.sample_collected ? esc(v.sample_id || '✓ collected')
+                                  : '<span class="muted">not collected</span>', 'sample'],
+    ['Notes', v.notes ? esc(v.notes) : '<span class="muted">none</span>', 'notes']
   ].filter(function (r) { return r[1] != null; });
-  return '<table class="dash-table"><tbody>' + rows.map(function (r) {
-    return '<tr><td style="color:var(--grey);white-space:nowrap">' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+
+  var canEdit = S.me && S.me.role === 'manager' && v.id;
+  return '<table class="dash-table detail-table"><tbody>' + rows.map(function (r) {
+    var pencil = (canEdit && r[2])
+      ? '<button class="row-edit" data-editfield="' + r[2] + '" title="Change ' + r[0].toLowerCase() +
+        '" aria-label="Change ' + r[0].toLowerCase() + '">✎</button>' : '';
+    return '<tr data-fieldrow="' + (r[2] || '') + '">' +
+      '<td style="color:var(--grey);white-space:nowrap">' + r[0] + '</td>' +
+      '<td><span class="row-val">' + r[1] + '</span>' + pencil + '</td></tr>';
   }).join('') + '</tbody></table>';
+}
+
+/* One row, one change. Mantsatsi asked to correct a single detail without
+   being shown the whole visit as a form — so the pencil swaps just that row's
+   value for the right control, and saves only that key. fs_update_visit takes
+   a patch, so nothing else on the visit is touched or overwritten. */
+function editVisitField(id, field) {
+  var d = S._visitDetail || {};
+  var v = d.visit || {};
+  if (v.id !== id) { toast('Open the visit first'); return; }
+  var tr = document.querySelector('[data-fieldrow="' + field + '"]');
+  if (!tr) return;
+  var cell = tr.children[1];
+  if (cell.querySelector('.row-editor')) return;      // already open
+  var prev = cell.innerHTML;
+
+  var control;
+  if (field === 'ai_administered') {
+    control = '<select id="rfInput"><option value="true"' + (v.ai_administered === true ? ' selected' : '') +
+      '>AI advisory</option><option value="false"' + (v.ai_administered === false ? ' selected' : '') +
+      '>Conventional (no AI)</option></select>';
+  } else if (field === 'farmer_id') {
+    control = '<select id="rfInput"><option value="">— general visit —</option>' +
+      farmersOf(v.site_id).map(function (f) {
+        return '<option value="' + f.id + '"' + (f.id === v.farmer_id ? ' selected' : '') + '>' +
+          esc(f.name) + (f.village ? ' — ' + esc(f.village) : '') + '</option>';
+      }).join('') + '</select>';
+  } else if (field === 'sample') {
+    control = '<label class="row-check"><input type="checkbox" id="rfSample"' +
+      (v.sample_collected ? ' checked' : '') + '> collected</label>' +
+      '<input id="rfInput" type="text" placeholder="Sample ID" value="' + esc(v.sample_id || '') + '"' +
+      (v.sample_collected ? '' : ' style="display:none"') + '>';
+  } else if (field === 'notes') {
+    control = '<textarea id="rfInput" rows="3">' + esc(v.notes || '') + '</textarea>';
+  } else {
+    control = '<input id="rfInput" type="text" value="' + esc(v.issue || '') + '">';
+  }
+
+  cell.innerHTML = '<div class="row-editor">' + control +
+    '<div class="row-editor-btns"><button class="btn btn-sm btn-primary" id="rfSave">Save</button>' +
+    '<button class="btn btn-sm btn-outline" id="rfCancel">Cancel</button></div></div>';
+
+  var sampleBox = $('#rfSample');
+  if (sampleBox) sampleBox.onchange = function () {
+    $('#rfInput').style.display = this.checked ? '' : 'none';
+  };
+  $('#rfCancel').onclick = function () { cell.innerHTML = prev; };
+  var input = $('#rfInput');
+  if (input && input.focus) input.focus();
+
+  $('#rfSave').onclick = function () {
+    var patch = {};
+    if (field === 'ai_administered') patch.ai_administered = input.value === 'true';
+    else if (field === 'farmer_id') patch.farmer_id = input.value || null;
+    else if (field === 'sample') {
+      patch.sample_collected = sampleBox.checked;
+      patch.sample_id = sampleBox.checked ? (input.value.trim() || null) : null;
+    } else patch[field] = input.value.trim() || null;
+
+    var btn = $('#rfSave');
+    btn.disabled = true;
+    rpc('fs_update_visit', { p_token: S.token, p_visit_id: id, p_patch: patch })
+      .then(function (res) {
+        toast(res && res.changed === false ? 'Nothing changed' : 'Saved');
+        visitDetailModal(id);                 // re-fetch: new value + edit history
+        if ($('#dashBody')) bindDash();
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        if (!handleAuthError(err)) toast(err.message);
+      });
+  };
 }
 function visitReadingsTable(readings) {
   if (!readings || !readings.length) return '<p class="muted small mt8">No soil data on this visit.</p>';
@@ -253,7 +338,11 @@ function visitDetailModal(id) {
       visitReadingsTable(d.readings) +
       visitPhotosHTML(d.photos) +
       (S.me && S.me.role === 'manager'
-        ? '<button class="btn btn-outline btn-block mt12" id="btnEditVisit">✎ Edit / correct this visit</button>' : '');
+        ? '<p class="muted small mt8">Tap ✎ next to a line to change just that detail.</p>' +
+          '<button class="btn btn-outline btn-block" id="btnEditVisit">Edit soil readings &amp; everything else</button>' : '');
+    body.querySelectorAll('[data-editfield]').forEach(function (b) {
+      b.onclick = function () { editVisitField(id, b.dataset.editfield); };
+    });
     var eb = $('#btnEditVisit');
     if (eb) eb.onclick = function () { visitEditModal(id); };
   }).catch(function (err) {
@@ -354,7 +443,13 @@ function visitEditModal(id) {
   };
 }
 function actRowHTML(v) {
-  return '<div class="queue-item act-row" data-visit="' + v.id + '">' +
+  // managers can swipe a row left to reveal Edit / Delete; the actions sit
+  // behind the row so a stray horizontal scroll never triggers them
+  var swipe = S.me && S.me.role === 'manager';
+  return (swipe ? '<div class="swipe-wrap"><div class="swipe-actions">' +
+      '<button class="swipe-btn edit" data-swipeedit="' + v.id + '">✎ Edit</button>' +
+      '<button class="swipe-btn del" data-swipedel="' + v.id + '">🗑 Delete</button></div>' : '') +
+    '<div class="queue-item act-row' + (swipe ? ' swipeable' : '') + '" data-visit="' + v.id + '">' +
     '<div class="row spread"><b>' + esc(v.supervisor) + ' · ' + esc(v.site) + '</b>' +
     '<span class="muted small">' + fmtWhen(v.synced_at) + '</span></div>' +
     '<div class="muted small">' +
@@ -367,7 +462,74 @@ function actRowHTML(v) {
     (Number(v.photos) ? ' · ' + v.photos + '📷' : '') +
     '</div>' +
     (v.issue ? '<div class="small" style="color:var(--danger)">' + esc(v.issue) + '</div>' : '') +
-    '</div>';
+    '</div>' + (swipe ? '</div>' : '');
+}
+
+/* Swipe-left on a visit row (managers). Bound once, on the document, so it
+   keeps working for rows drawn later inside modals. Vertical drags are handed
+   back to the page immediately — the list has to stay scrollable. */
+var swipeOpen = null;
+function closeSwipe() {
+  if (swipeOpen) { swipeOpen.classList.remove('swiped'); swipeOpen = null; }
+}
+function bindSwipeActions() {
+  if (document._swipeBound) return;
+  document._swipeBound = true;
+  var x0 = 0, y0 = 0, row = null, decided = '';
+
+  document.addEventListener('touchstart', function (e) {
+    var el = e.target.closest ? e.target.closest('.act-row.swipeable') : null;
+    if (swipeOpen && swipeOpen !== el) closeSwipe();
+    if (!el) return;
+    row = el; decided = '';
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function (e) {
+    if (!row) return;
+    var dx = e.touches[0].clientX - x0, dy = e.touches[0].clientY - y0;
+    if (!decided) {
+      if (Math.abs(dy) > Math.abs(dx)) { decided = 'scroll'; row = null; return; }
+      if (Math.abs(dx) > 8) decided = 'swipe';
+    }
+    if (decided === 'swipe') row.classList.toggle('swiped', dx < -40);
+  }, { passive: true });
+
+  document.addEventListener('touchend', function () {
+    if (row && row.classList.contains('swiped')) swipeOpen = row;
+    row = null;
+  }, { passive: true });
+
+  document.addEventListener('click', function (e) {
+    var ed = e.target.closest && e.target.closest('[data-swipeedit]');
+    var dl = e.target.closest && e.target.closest('[data-swipedel]');
+    if (ed) {
+      e.stopPropagation(); closeSwipe();
+      visitDetailModal(ed.dataset.swipeedit);
+      return;
+    }
+    if (dl) {
+      e.stopPropagation(); closeSwipe();
+      deleteVisit(dl.dataset.swipedel);
+      return;
+    }
+    if (swipeOpen && !e.target.closest('.swipe-wrap')) closeSwipe();
+  });
+}
+
+/* Removal is reversible: the server archives the visit with its photos and
+   readings, so a mis-swipe costs nothing. Say so, and offer the undo. */
+function deleteVisit(id) {
+  if (!confirm('Remove this visit from the records?\n\nIt is archived, not destroyed — ' +
+               'tell Claude if you need it back.')) return;
+  rpc('fs_delete_visit', { p_token: S.token, p_visit_id: id, p_reason: null })
+    .then(function () {
+      toast('Visit removed');
+      closeModal();
+      S._act = null;
+      if ($('#dashBody')) bindDash();
+    })
+    .catch(function (err) { if (!handleAuthError(err)) toast(err.message); });
 }
 function statLine(rows) {
   return '<table class="dash-table"><tbody>' + rows.filter(function (r) { return r[1] != null; })
@@ -2359,6 +2521,7 @@ loadQueue().catch(function () {})
   .then(stampQueuedFarmerNames)
   .then(function () {
   if (!location.hash) location.hash = S.token ? '#/home' : '#/login';
+  bindSwipeActions();
   render();
   if (S.token) {
     // refresh cached data, then re-render only the content view — a full
